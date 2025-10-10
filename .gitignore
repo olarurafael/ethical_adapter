@@ -9,5 +9,6 @@ runs/
 data/
 .venv/
 .DS_Store
+logs.txt
 
 
