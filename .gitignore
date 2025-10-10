@@ -1,9 +1,13 @@
 __pycache__/
 *.pyc
 *.pt
+*.egg-info/
+*.egg
 *.bin
 *.safetensors
 runs/
 data/
 .venv/
 .DS_Store
+
+
