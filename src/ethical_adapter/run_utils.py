@@ -2,8 +2,9 @@
 import json
 import logging
 import os
-from datetime import datetime
+import datetime
 from typing import Dict, Tuple
+from transformers import PreTrainedTokenizer
 
 
 def make_run_dir(base_dir: str = "./runs") -> str:
@@ -74,3 +75,39 @@ def log_trainable_params(logger: logging.Logger, model) -> Tuple[int, int]:
     pct = 100.0 * trainable / total if total else 0.0
     logger.info(f"Params — total: {total:,} | trainable: {trainable:,} ({pct:.4f}%)")
     return total, trainable
+
+
+def setup_run(config):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_dir = os.path.join(config["runs_dir"], timestamp)
+    os.makedirs(run_dir, exist_ok=True)
+
+    with open(os.path.join(run_dir, "config.json"), "w") as f:
+        json.dump(config, f, indent=2)
+
+    log_path = os.path.join(run_dir, "train.log")
+    logging.basicConfig(
+        filename=log_path,
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    logger = logging.getLogger()
+    print(f"New training run started in: {run_dir}")
+    logger.info(f"New training run started in: {run_dir}")
+    return run_dir, logger
+
+
+def log_info(msg, logger):
+    print(msg)
+    logger.info(msg)
+
+
+def save_checkpoint(model, tokenizer, run_dir, epoch, log, best=False):
+    name = f"epoch_{epoch}" if not best else "best"
+    ckpt_dir = os.path.join(run_dir, name)
+    os.makedirs(ckpt_dir, exist_ok=True)
+
+    model.save_pretrained(ckpt_dir, safe_serialization=True)
+    tokenizer.save_pretrained(ckpt_dir)
+    log(f"Saved checkpoint to {ckpt_dir}")
