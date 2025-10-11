@@ -1,0 +1,27 @@
+# general
+model_name: "allenai/OLMo-2-0425-1B"
+local_path: "./models/OLMo-2-0425-1B-full"
+
+# dataset
+dataset_name: "wikitext"
+dataset_config: "wikitext-2-raw-v1"
+dataset_split: "train[:1%]"
+data_dir: "./data"
+
+# adapter config
+rank: 8
+alpha: 16.0
+dropout: 0.05
+target_modules:
+  - "model.layers.8.mlp.down_proj"
+  - "model.layers.15.mlp.down_proj"
+
+# training
+batch_size: 2
+lr: 5e-4
+epochs: 2
+max_length: 128
+save_every: 1
+
+# housekeeping
+runs_dir: "./runs"
