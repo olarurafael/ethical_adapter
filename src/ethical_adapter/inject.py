@@ -1,3 +1,4 @@
+# src/ethical_adapter/inject.py
 import torch.nn as nn
 from types import SimpleNamespace
 from .adapter import ParallelLinear

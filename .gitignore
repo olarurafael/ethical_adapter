@@ -10,5 +10,5 @@ data/
 .venv/
 .DS_Store
 logs.txt
-
-
+treelogs.txt
+models/*
