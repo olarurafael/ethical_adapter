@@ -1,3 +1,4 @@
+# src/ethical_adapter/config.py
 from dataclasses import dataclass
 from typing import List
 
