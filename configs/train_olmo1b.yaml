@@ -2,11 +2,44 @@
 model_name: "allenai/OLMo-2-0425-1B"
 local_path: "./models/OLMo-2-0425-1B-full"
 
-# dataset
-dataset_name: "wikitext"
-dataset_config: "wikitext-2-raw-v1"
-dataset_split: "train[:1%]"
-data_dir: "./data"
+# datasets (all full train splits; cached under /data from your prefetch)
+datasets:
+  # ethical / safety
+  - name: "Anthropic/hh-rlhf"
+    split: "train"
+    text_field: null
+  - name: "hendrycks/ethics"
+    config: "deontology"
+    split: "train"
+    text_field: "text"
+  - name: "hendrycks/ethics"
+    config: "justice"
+    split: "train"
+    text_field: "text"
+  - name: "hendrycks/ethics"
+    config: "virtue"
+    split: "train"
+    text_field: "text"
+  - name: "hendrycks/ethics"
+    config: "utilitarianism"
+    split: "train"
+    text_field: "text"
+  - name: "hendrycks/ethics"
+    config: "commonsense"
+    split: "train"
+    text_field: "text"
+  - name: "allenai/real-toxicity-prompts"
+    split: "train"
+    text_field: "prompt"
+
+  # neutral / fluency preservation
+  # - name: "wikitext"
+  #   config: "wikitext-103-raw-v1"
+  #   split: "train"
+  #   text_field: "text"
+  # - name: "Skylion007/openwebtext"
+  #   split: "train"
+  #   text_field: "text"
 
 # adapter config
 rank: 8
@@ -17,11 +50,16 @@ target_modules:
   - "model.layers.15.mlp.down_proj"
 
 # training
-batch_size: 2
+batch_size: 4
 lr: 5e-4
-epochs: 2
-max_length: 128
+epochs: 5
+max_length: 1024
+max_train_samples: 200000
 save_every: 1
+gradient_accumulation_steps: 4 
+num_workers: 6
+num_proc: 12
 
 # housekeeping
 runs_dir: "./runs"
+data_dir: "./data"
