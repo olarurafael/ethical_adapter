@@ -5,9 +5,9 @@ local_path: "./models/OLMo-2-0425-1B-full"
 # datasets (all full train splits; cached under /data from your prefetch)
 datasets:
   # ethical / safety
-  - name: "Anthropic/hh-rlhf"
-    split: "train"
-    text_field: null
+  # - name: "Anthropic/hh-rlhf"
+  #   split: "train"
+  #   text_field: null
   - name: "hendrycks/ethics"
     config: "deontology"
     split: "train"
@@ -20,17 +20,17 @@ datasets:
     config: "virtue"
     split: "train"
     text_field: "text"
-  - name: "hendrycks/ethics"
-    config: "utilitarianism"
-    split: "train"
-    text_field: "text"
-  - name: "hendrycks/ethics"
-    config: "commonsense"
-    split: "train"
-    text_field: "text"
-  - name: "allenai/real-toxicity-prompts"
-    split: "train"
-    text_field: "prompt"
+  # - name: "hendrycks/ethics"
+  #   config: "utilitarianism"
+  #   split: "train"
+  #   text_field: "text"
+  # - name: "hendrycks/ethics"
+  #   config: "commonsense"
+  #   split: "train"
+  #   text_field: "text"
+  # - name: "allenai/real-toxicity-prompts"
+  #   split: "train"
+  #   text_field: "prompt"
 
   # neutral / fluency preservation
   # - name: "wikitext"
@@ -52,9 +52,9 @@ target_modules:
 # training
 batch_size: 4
 lr: 5e-4
-epochs: 5
-max_length: 1024
-max_train_samples: 200000
+epochs: 1
+max_length: 512
+max_train_samples: 20000
 save_every: 1
 gradient_accumulation_steps: 4 
 num_workers: 6
@@ -63,3 +63,4 @@ num_proc: 12
 # housekeeping
 runs_dir: "./runs"
 data_dir: "./data"
+load_adapters_from: "./runs/2025-10-13_13-15-47/best"

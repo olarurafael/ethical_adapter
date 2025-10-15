@@ -10,6 +10,9 @@ from ethical_adapter.config import AdapterConfig
 from ethical_adapter.inject import inject_adapters
 from ethical_adapter.utils import print_param_summary
 from ethical_adapter.run_utils import setup_run, log_info, save_checkpoint  # new helpers
+from ethical_adapter.early_stop_manager import EarlyStopManager
+from ethical_adapter.load_adapters import load_adapters_from_checkpoint
+
 
 
 # ------------------------------------------------------------
@@ -104,8 +107,8 @@ def load_and_merge_datasets(config):
         )
         merged = ds if merged is None else concatenate_datasets([merged, ds])
 
-    # big mixture -> shuffle for interleaving
     merged = merged.shuffle(seed=42)
+    
     if "max_train_samples" in config and config["max_train_samples"]:
         limit = config["max_train_samples"]
         limit = min(limit, len(merged))
@@ -122,6 +125,16 @@ def main(config):
     # setup run directory + logger
     run_dir, logger = setup_run(config)
     log = lambda msg: log_info(msg, logger)
+
+    # early stopping setup
+    es_cfg = config.get("early_stop", {})
+    early_stop = EarlyStopManager(
+        run_dir=run_dir,
+        enabled=es_cfg.get("enabled", False),
+        patience=es_cfg.get("patience", 1),
+        min_delta=es_cfg.get("min_delta", 0.0),
+    )
+
 
     tokenizer = AutoTokenizer.from_pretrained(config["local_path"])
     # ensure pad_token is set (common for decoder-only models)
@@ -148,6 +161,14 @@ def main(config):
     device = next(model.parameters()).device
     dtype = next(model.parameters()).dtype
     model = res.model.to(device=device, dtype=dtype)
+
+
+    # --- Optional warm start ---
+    if "load_adapters_from" in config and config["load_adapters_from"]:
+        load_dir = config["load_adapters_from"]
+        log(f"[INFO] Loading adapters from checkpoint: {load_dir}")
+        model = load_adapters_from_checkpoint(model, load_dir, logger)
+
 
     # --------------------------------------------------------
     # dataset mixture (train+val split AFTER merge)
@@ -227,6 +248,18 @@ def main(config):
             best_val = val_loss
             save_checkpoint(model, tokenizer, run_dir, "best", log, best=True)
 
+        # early stopping check
+        if early_stop.update(val_loss, epoch + 1):
+            log(f"[INFO] Metric early stop triggered at epoch {epoch+1}. "
+                f"(best was epoch {early_stop.best_epoch} with val_loss={early_stop.best_val:.4f})")
+            save_checkpoint(model, tokenizer, run_dir, "early_stop", log)
+            break
+
+        if early_stop.manual_stop_requested():
+            log("[INFO] Manual early stop requested — saving checkpoint and exiting.")
+            save_checkpoint(model, tokenizer, run_dir, epoch + 1, log)
+            break 
+
     log("Training completed successfully.")
 
 
@@ -242,4 +275,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     cfg = load_yaml_config(args.config)
+   
     main(cfg)
