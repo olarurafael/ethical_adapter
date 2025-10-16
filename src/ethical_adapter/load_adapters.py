@@ -1,28 +1,46 @@
-import torch
-import os
+# src/ethical_adapter/load_adapters.py
 
-def load_adapters_from_checkpoint(model, checkpoint_dir, logger=None):
+import os
+import logging
+from safetensors.torch import load_file
+
+def load_adapters_from_checkpoint(model, 
+                                  checkpoint_dir, 
+                                  logger: logging.Logger | None = None):
     """
-    Load adapter weights directly from an existing training run checkpoint.
-    Expects that inject_adapters() has already been called.
+    Load adapter weights from a safetensors checkpoint (runs/.../best).
     """
-    log = logger.info if logger else print
+    logger = logger or logging.getLogger(__name__)
 
     adapter_path = os.path.join(checkpoint_dir, "model.safetensors")
     if not os.path.exists(adapter_path):
         raise FileNotFoundError(f"[ERROR] No model.safetensors found in {checkpoint_dir}")
 
-    log(f"[INFO] Loading adapter weights from {adapter_path}")
+    logger.info(f" Loading adapter weights from {adapter_path}")
 
-    state = torch.load(adapter_path, map_location="cpu", weights_only=False)
-    # keep only adapter weights
+    # load tensors
+    state = load_file(adapter_path, device="cpu")
+
+    # keep only adapter-related weights
     adapter_state = {k: v for k, v in state.items() if "adapter" in k}
+
+    # detect model device + dtype
+    device = next(model.parameters()).device
+    dtype = next(model.parameters()).dtype
+
+    # move adapter modules to correct device/dtype
+    for name, module in model.named_modules():
+        if "adapter" in name:
+            module.to(device=device, dtype=dtype)
+
+    # move the state tensors and load
+    adapter_state = {k: v.to(device) for k, v in adapter_state.items()}
     missing, unexpected = model.load_state_dict(adapter_state, strict=False)
 
     if missing:
-        log(f"[WARN] Missing keys ({len(missing)}): {missing[:5]}")
+        logger.warning("Missing keys (%s): %s", len(missing), missing[:5])
     if unexpected:
-        log(f"[WARN] Unexpected keys ({len(unexpected)}): {unexpected[:5]}")
+        logger.warning("Unexpected keys (%s): %s", len(unexpected), unexpected[:5])
 
-    log("[INFO] Adapter weights loaded successfully.")
+    logger.info("Adapter weights loaded successfully.")
     return model

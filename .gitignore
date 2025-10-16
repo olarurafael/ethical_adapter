@@ -12,3 +12,4 @@ data/
 logs.txt
 treelogs.txt
 models/*
+eval/
