@@ -5,13 +5,13 @@ from torch.utils.data import DataLoader
 from datasets import load_dataset, concatenate_datasets
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm import tqdm
-from ethical_adapter.config import AdapterConfig
-from ethical_adapter.inject import inject_adapters
-from ethical_adapter.utils import print_param_summary
-from ethical_adapter.run_utils import setup_run, save_checkpoint
-from ethical_adapter.early_stop_manager import EarlyStopManager
-from ethical_adapter.load_adapters import load_adapters_from_checkpoint
-from ethical_adapter.run_utils import get_latest_best_checkpoint
+from ethical_adapter.core.config import AdapterConfig
+from ethical_adapter.core.inject import inject_adapters
+from ethical_adapter.core.utils import print_param_summary
+from ethical_adapter.core.run_utils import setup_run, save_checkpoint
+from ethical_adapter.training.early_stop_manager import EarlyStopManager
+from ethical_adapter.training.load_adapters import load_adapters_from_checkpoint
+from ethical_adapter.core.run_utils import get_latest_best_checkpoint
 
 
 # ------------------------------------------------------------

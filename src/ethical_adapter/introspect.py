@@ -1,7 +1,7 @@
 # src/ethical_adapter/introspect.py
 import torch
 import torch.nn as nn
-from .adapter import ParallelLinear
+from .core.adapter import ParallelLinear
 
 
 def list_adapters(model: nn.Module):

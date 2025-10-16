@@ -10,9 +10,9 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 from ethical_adapter.config_io import load_yaml_config
-from ethical_adapter.inject import inject_adapters
-from ethical_adapter.config import AdapterConfig
-from ethical_adapter.load_adapters import load_adapters_from_checkpoint
+from ethical_adapter.core.inject import inject_adapters
+from ethical_adapter.core.config import AdapterConfig
+from ethical_adapter.training.load_adapters import load_adapters_from_checkpoint
 
 
 @torch.inference_mode()

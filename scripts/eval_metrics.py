@@ -8,13 +8,13 @@ import argparse
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-from ethical_adapter.metrics import compute_perplexity, cosine_similarity_between_models
-from ethical_adapter.load_adapters import load_adapters_from_checkpoint
-from ethical_adapter.inject import inject_adapters
-from ethical_adapter.config import AdapterConfig
+from ethical_adapter.evaluation.metrics import compute_perplexity, cosine_similarity_between_models
+from ethical_adapter.training.load_adapters import load_adapters_from_checkpoint
+from ethical_adapter.core.inject import inject_adapters
+from ethical_adapter.core.config import AdapterConfig
 from ethical_adapter.config_io import load_yaml_config
-from ethical_adapter.metrics_cka import compute_layerwise_CKA, compute_layerwise_deltas
-from ethical_adapter.plot_utils import plot_cka_and_delta
+from ethical_adapter.evaluation.metrics_cka import compute_layerwise_CKA, compute_layerwise_deltas
+from ethical_adapter.evaluation.plot_utils import plot_cka_and_delta
 
 
 # ------------------------------------------------------------
