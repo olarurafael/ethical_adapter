@@ -3,7 +3,7 @@
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from ethical_adapter.config import AdapterConfig
-from ethical_adapter.inject import inject_adapters
+from ethical_adapter.core.inject import inject_adapters
 from ethical_adapter.introspect import print_layer_map, print_adapter_summary
 
 

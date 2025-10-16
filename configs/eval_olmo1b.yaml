@@ -1,0 +1,29 @@
+# =============================
+# Evaluation configuration
+# =============================
+
+# model paths
+model_name: "allenai/OLMo-2-0425-1B"
+local_path: "./models/OLMo-2-0425-1B-full"
+load_adapters_from: "./runs/2025-10-14_19-53-31/best"
+
+# adapter parameters
+rank: 8
+alpha: 16.0
+dropout: 0.05
+target_modules:
+  - "model.layers.8.mlp.down_proj"
+  - "model.layers.15.mlp.down_proj"
+
+# evaluation parameters
+max_length: 512
+max_samples: 200
+dataset_name: "wikitext"
+dataset_config: "wikitext-2-raw-v1"
+split: "test"
+
+# output
+metrics_output: "./eval/metrics_results.json"
+plots_dir: "./eval/"
+runs_dir: "./runs"
+data_dir: "./data"
