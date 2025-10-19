@@ -40,20 +40,20 @@ def main(cfg):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(cfg["local_path"])
+    tokenizer = AutoTokenizer.from_pretrained(cfg["tokenizer_name"] if "tokenizer_name" in cfg else cfg["local_path"])
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
         tokenizer.pad_token = tokenizer.eos_token
 
     # load base model
     logging.info("Loading base model...")
     base_model = AutoModelForCausalLM.from_pretrained(
-        cfg["local_path"], dtype=torch.bfloat16, device_map="auto"
+        cfg["model_name"] if "model_name" in cfg else cfg["local_path"], dtype=torch.bfloat16, device_map="auto"
     )
 
     # create copy of base model and load adapters
     logging.info("Preparing adapter model...")
     steer_model = AutoModelForCausalLM.from_pretrained(
-        cfg["local_path"], dtype=torch.bfloat16, device_map="auto"
+         cfg["model_name"] if "model_name" in cfg else cfg["local_path"], dtype=torch.bfloat16, device_map="auto"
     )
 
     adapter_cfg = AdapterConfig(

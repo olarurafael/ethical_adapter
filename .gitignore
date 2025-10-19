@@ -13,3 +13,5 @@ logs.txt
 treelogs.txt
 models/*
 eval/
+configs/
+scripts/

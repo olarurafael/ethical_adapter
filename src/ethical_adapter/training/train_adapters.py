@@ -139,14 +139,14 @@ def main(config):
     )
 
 
-    tokenizer = AutoTokenizer.from_pretrained(config["local_path"])
+    tokenizer = AutoTokenizer.from_pretrained(config["tokenizer_name"] if "tokenizer_name" in config else config["local_path"])
     # ensure pad_token is set (common for decoder-only models)
     if tokenizer.pad_token is None and tokenizer.eos_token is not None:
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "right"
 
     model = AutoModelForCausalLM.from_pretrained(
-        config["local_path"],
+        config["model_name"] if "model_name" in config else config["local_path"],
         dtype=torch.bfloat16,
         device_map="auto",
     )
