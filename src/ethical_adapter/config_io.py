@@ -18,11 +18,24 @@ def load_yaml_config(path: str) -> Dict[str, Any]:
         raise ValueError(f"YAML config file {path} is empty or invalid.")
 
     # sanitize numeric types
-    for key in ["lr", "alpha", "dropout", "rank", "batch_size", "epochs", "max_length", "save_every"]:
+    for key in [
+        "lr",
+        "alpha",
+        "dropout",
+        "rank",
+        "batch_size",
+        "epochs",
+        "max_length",
+        "save_every",
+    ]:
         if key in cfg and isinstance(cfg[key], str):
             try:
                 # convert scientific notation or numeric strings
-                cfg[key] = float(cfg[key]) if "." in cfg[key] or "e" in cfg[key].lower() else int(cfg[key])
+                cfg[key] = (
+                    float(cfg[key])
+                    if "." in cfg[key] or "e" in cfg[key].lower()
+                    else int(cfg[key])
+                )
             except ValueError:
                 pass  # leave as string if truly non-numeric
     return cfg

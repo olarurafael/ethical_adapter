@@ -2,6 +2,7 @@
 import signal
 from pathlib import Path
 
+
 class EarlyStopManager:
     """
     Unified early-stopping helper:
@@ -18,7 +19,9 @@ class EarlyStopManager:
         self.best_val = float("inf")
         self.best_epoch = -1
         self.no_improve = 0
+
         self.manual_flag = False
+        self.reason = None  # "metric" or "manual" or "stop_file"
 
         self.stop_file = self.run_dir / "STOP"
         if self.stop_file.exists():
@@ -27,31 +30,53 @@ class EarlyStopManager:
         # Hook Ctrl+C
         signal.signal(signal.SIGINT, self._on_sigint)
 
-    # ------------------------------
-    # manual stop
-    # ------------------------------
+    # manual stop requested
     def _on_sigint(self, signum, frame):
         self.manual_flag = True
-        print("\n[INFO] Early stop requested — will save after this epoch.")
+        print("\n Early stop requested — will save after this epoch.")
 
-    def manual_stop_requested(self):
-        """Return True if STOP file exists or Ctrl+C pressed."""
-        return self.manual_flag or self.stop_file.exists()
+    def _check_manual(self):
+        if self.manual_flag:
+            self.reason = "manual"
+            return True
 
-    # ------------------------------
-    # metric stop
-    # ------------------------------
-    def update(self, val_loss, epoch):
-        """Update metric-based logic; return True if stop triggered."""
+        if self.stop_file.exists():
+            self.reason = "stop_file"
+            return True
+
+        return False
+
+    def _check_metric(self, val_loss, epoch):
         if not self.enabled:
             return False
 
-        if val_loss < (self.best_val - self.min_delta):
+        improved = val_loss < (self.best_val - self.min_delta)
+
+        if improved:
             self.best_val = val_loss
             self.best_epoch = epoch
             self.no_improve = 0
+            return False  # don't stop yet
         else:
             self.no_improve += 1
+            if self.no_improve >= self.patience:
+                self.reason = "metric"
+                return True
 
-        return self.no_improve >= self.patience
+        return False
 
+    # unified check
+    def should_stop(self, val_loss=None, epoch=None):
+        """
+        returns true if stopping is needed for any reason.
+        self.reason is gives the type of stop
+        """
+
+        if self._check_manual():
+            return True
+
+        if val_loss is not None:
+            if self._check_metric(val_loss, epoch):
+                return True
+
+        return False

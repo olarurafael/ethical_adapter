@@ -1,0 +1,259 @@
+
+Layer map for pattern 'layers':
+------------------------------------------------------------
+  0: model.layers
+  1: model.layers.0
+  2: model.layers.0.self_attn
+  3: model.layers.0.self_attn.q_proj
+  4: model.layers.0.self_attn.k_proj
+  5: model.layers.0.self_attn.v_proj
+  6: model.layers.0.self_attn.o_proj
+  7: model.layers.0.self_attn.q_norm
+  8: model.layers.0.self_attn.k_norm
+  9: model.layers.0.mlp
+ 10: model.layers.0.mlp.gate_proj
+ 11: model.layers.0.mlp.up_proj
+ 12: model.layers.0.mlp.down_proj
+ 13: model.layers.0.mlp.act_fn
+ 14: model.layers.0.post_attention_layernorm
+ 15: model.layers.0.post_feedforward_layernorm
+ 16: model.layers.1
+ 17: model.layers.1.self_attn
+ 18: model.layers.1.self_attn.q_proj
+ 19: model.layers.1.self_attn.k_proj
+ 20: model.layers.1.self_attn.v_proj
+ 21: model.layers.1.self_attn.o_proj
+ 22: model.layers.1.self_attn.q_norm
+ 23: model.layers.1.self_attn.k_norm
+ 24: model.layers.1.mlp
+ 25: model.layers.1.mlp.gate_proj
+ 26: model.layers.1.mlp.up_proj
+ 27: model.layers.1.mlp.down_proj
+ 28: model.layers.1.mlp.act_fn
+ 29: model.layers.1.post_attention_layernorm
+ 30: model.layers.1.post_feedforward_layernorm
+ 31: model.layers.2
+ 32: model.layers.2.self_attn
+ 33: model.layers.2.self_attn.q_proj
+ 34: model.layers.2.self_attn.k_proj
+ 35: model.layers.2.self_attn.v_proj
+ 36: model.layers.2.self_attn.o_proj
+ 37: model.layers.2.self_attn.q_norm
+ 38: model.layers.2.self_attn.k_norm
+ 39: model.layers.2.mlp
+ 40: model.layers.2.mlp.gate_proj
+ 41: model.layers.2.mlp.up_proj
+ 42: model.layers.2.mlp.down_proj
+ 43: model.layers.2.mlp.act_fn
+ 44: model.layers.2.post_attention_layernorm
+ 45: model.layers.2.post_feedforward_layernorm
+ 46: model.layers.3
+ 47: model.layers.3.self_attn
+ 48: model.layers.3.self_attn.q_proj
+ 49: model.layers.3.self_attn.k_proj
+ 50: model.layers.3.self_attn.v_proj
+ 51: model.layers.3.self_attn.o_proj
+ 52: model.layers.3.self_attn.q_norm
+ 53: model.layers.3.self_attn.k_norm
+ 54: model.layers.3.mlp
+ 55: model.layers.3.mlp.gate_proj
+ 56: model.layers.3.mlp.up_proj
+ 57: model.layers.3.mlp.down_proj
+ 58: model.layers.3.mlp.act_fn
+ 59: model.layers.3.post_attention_layernorm
+ 60: model.layers.3.post_feedforward_layernorm
+ 61: model.layers.4
+ 62: model.layers.4.self_attn
+ 63: model.layers.4.self_attn.q_proj
+ 64: model.layers.4.self_attn.k_proj
+ 65: model.layers.4.self_attn.v_proj
+ 66: model.layers.4.self_attn.o_proj
+ 67: model.layers.4.self_attn.q_norm
+ 68: model.layers.4.self_attn.k_norm
+ 69: model.layers.4.mlp
+ 70: model.layers.4.mlp.gate_proj
+ 71: model.layers.4.mlp.up_proj
+ 72: model.layers.4.mlp.down_proj
+ 73: model.layers.4.mlp.act_fn
+ 74: model.layers.4.post_attention_layernorm
+ 75: model.layers.4.post_feedforward_layernorm
+ 76: model.layers.5
+ 77: model.layers.5.self_attn
+ 78: model.layers.5.self_attn.q_proj
+ 79: model.layers.5.self_attn.k_proj
+ 80: model.layers.5.self_attn.v_proj
+ 81: model.layers.5.self_attn.o_proj
+ 82: model.layers.5.self_attn.q_norm
+ 83: model.layers.5.self_attn.k_norm
+ 84: model.layers.5.mlp
+ 85: model.layers.5.mlp.gate_proj
+ 86: model.layers.5.mlp.up_proj
+ 87: model.layers.5.mlp.down_proj
+ 88: model.layers.5.mlp.act_fn
+ 89: model.layers.5.post_attention_layernorm
+ 90: model.layers.5.post_feedforward_layernorm
+ 91: model.layers.6
+ 92: model.layers.6.self_attn
+ 93: model.layers.6.self_attn.q_proj
+ 94: model.layers.6.self_attn.k_proj
+ 95: model.layers.6.self_attn.v_proj
+ 96: model.layers.6.self_attn.o_proj
+ 97: model.layers.6.self_attn.q_norm
+ 98: model.layers.6.self_attn.k_norm
+ 99: model.layers.6.mlp
+100: model.layers.6.mlp.gate_proj
+101: model.layers.6.mlp.up_proj
+102: model.layers.6.mlp.down_proj
+103: model.layers.6.mlp.act_fn
+104: model.layers.6.post_attention_layernorm
+105: model.layers.6.post_feedforward_layernorm
+106: model.layers.7
+107: model.layers.7.self_attn
+108: model.layers.7.self_attn.q_proj
+109: model.layers.7.self_attn.k_proj
+110: model.layers.7.self_attn.v_proj
+111: model.layers.7.self_attn.o_proj
+112: model.layers.7.self_attn.q_norm
+113: model.layers.7.self_attn.k_norm
+114: model.layers.7.mlp
+115: model.layers.7.mlp.gate_proj
+116: model.layers.7.mlp.up_proj
+117: model.layers.7.mlp.down_proj
+118: model.layers.7.mlp.act_fn
+119: model.layers.7.post_attention_layernorm
+120: model.layers.7.post_feedforward_layernorm
+121: model.layers.8
+122: model.layers.8.self_attn
+123: model.layers.8.self_attn.q_proj
+124: model.layers.8.self_attn.k_proj
+125: model.layers.8.self_attn.v_proj
+126: model.layers.8.self_attn.o_proj
+127: model.layers.8.self_attn.q_norm
+128: model.layers.8.self_attn.k_norm
+129: model.layers.8.mlp
+130: model.layers.8.mlp.gate_proj
+131: model.layers.8.mlp.up_proj
+132: model.layers.8.mlp.down_proj
+133: model.layers.8.mlp.act_fn
+134: model.layers.8.post_attention_layernorm
+135: model.layers.8.post_feedforward_layernorm
+136: model.layers.9
+137: model.layers.9.self_attn
+138: model.layers.9.self_attn.q_proj
+139: model.layers.9.self_attn.k_proj
+140: model.layers.9.self_attn.v_proj
+141: model.layers.9.self_attn.o_proj
+142: model.layers.9.self_attn.q_norm
+143: model.layers.9.self_attn.k_norm
+144: model.layers.9.mlp
+145: model.layers.9.mlp.gate_proj
+146: model.layers.9.mlp.up_proj
+147: model.layers.9.mlp.down_proj
+148: model.layers.9.mlp.act_fn
+149: model.layers.9.post_attention_layernorm
+150: model.layers.9.post_feedforward_layernorm
+151: model.layers.10
+152: model.layers.10.self_attn
+153: model.layers.10.self_attn.q_proj
+154: model.layers.10.self_attn.k_proj
+155: model.layers.10.self_attn.v_proj
+156: model.layers.10.self_attn.o_proj
+157: model.layers.10.self_attn.q_norm
+158: model.layers.10.self_attn.k_norm
+159: model.layers.10.mlp
+160: model.layers.10.mlp.gate_proj
+161: model.layers.10.mlp.up_proj
+162: model.layers.10.mlp.down_proj
+163: model.layers.10.mlp.act_fn
+164: model.layers.10.post_attention_layernorm
+165: model.layers.10.post_feedforward_layernorm
+166: model.layers.11
+167: model.layers.11.self_attn
+168: model.layers.11.self_attn.q_proj
+169: model.layers.11.self_attn.k_proj
+170: model.layers.11.self_attn.v_proj
+171: model.layers.11.self_attn.o_proj
+172: model.layers.11.self_attn.q_norm
+173: model.layers.11.self_attn.k_norm
+174: model.layers.11.mlp
+175: model.layers.11.mlp.gate_proj
+176: model.layers.11.mlp.up_proj
+177: model.layers.11.mlp.down_proj
+178: model.layers.11.mlp.act_fn
+179: model.layers.11.post_attention_layernorm
+180: model.layers.11.post_feedforward_layernorm
+181: model.layers.12
+182: model.layers.12.self_attn
+183: model.layers.12.self_attn.q_proj
+184: model.layers.12.self_attn.k_proj
+185: model.layers.12.self_attn.v_proj
+186: model.layers.12.self_attn.o_proj
+187: model.layers.12.self_attn.q_norm
+188: model.layers.12.self_attn.k_norm
+189: model.layers.12.mlp
+190: model.layers.12.mlp.gate_proj
+191: model.layers.12.mlp.up_proj
+192: model.layers.12.mlp.down_proj
+193: model.layers.12.mlp.act_fn
+194: model.layers.12.post_attention_layernorm
+195: model.layers.12.post_feedforward_layernorm
+196: model.layers.13
+197: model.layers.13.self_attn
+198: model.layers.13.self_attn.q_proj
+199: model.layers.13.self_attn.k_proj
+200: model.layers.13.self_attn.v_proj
+201: model.layers.13.self_attn.o_proj
+202: model.layers.13.self_attn.q_norm
+203: model.layers.13.self_attn.k_norm
+204: model.layers.13.mlp
+205: model.layers.13.mlp.gate_proj
+206: model.layers.13.mlp.up_proj
+207: model.layers.13.mlp.down_proj
+208: model.layers.13.mlp.act_fn
+209: model.layers.13.post_attention_layernorm
+210: model.layers.13.post_feedforward_layernorm
+211: model.layers.14
+212: model.layers.14.self_attn
+213: model.layers.14.self_attn.q_proj
+214: model.layers.14.self_attn.k_proj
+215: model.layers.14.self_attn.v_proj
+216: model.layers.14.self_attn.o_proj
+217: model.layers.14.self_attn.q_norm
+218: model.layers.14.self_attn.k_norm
+219: model.layers.14.mlp
+220: model.layers.14.mlp.gate_proj
+221: model.layers.14.mlp.up_proj
+222: model.layers.14.mlp.down_proj
+223: model.layers.14.mlp.act_fn
+224: model.layers.14.post_attention_layernorm
+225: model.layers.14.post_feedforward_layernorm
+226: model.layers.15
+227: model.layers.15.self_attn
+228: model.layers.15.self_attn.q_proj
+229: model.layers.15.self_attn.k_proj
+230: model.layers.15.self_attn.v_proj
+231: model.layers.15.self_attn.o_proj
+232: model.layers.15.self_attn.q_norm
+233: model.layers.15.self_attn.k_norm
+234: model.layers.15.mlp
+235: model.layers.15.mlp.gate_proj
+236: model.layers.15.mlp.up_proj
+237: model.layers.15.mlp.down_proj
+238: model.layers.15.mlp.act_fn
+239: model.layers.15.post_attention_layernorm
+240: model.layers.15.post_feedforward_layernorm
+------------------------------------------------------------
+Total matched layers: 241
+
+Injected adapters:
+ - model.layers.8.mlp.down_proj
+ - model.layers.15.mlp.down_proj
+
+Max absolute difference after injection: 2.500000e-01
+
+Layer                                                        |     Params |     In |    Out | Rank
+-----------------------------------------------------------------------------------------------
+model.layers.8.mlp.down_proj                                 |     81,920 |   8192 |   2048 |    8
+model.layers.15.mlp.down_proj                                |     81,920 |   8192 |   2048 |    8
+-----------------------------------------------------------------------------------------------
+Total adapter parameters: 163,840

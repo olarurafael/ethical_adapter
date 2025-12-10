@@ -13,3 +13,25 @@ logs.txt
 treelogs.txt
 models/*
 eval/
+configs/
+scripts/
+run_phase1/
+run_phase2/
+kl_loss_gate_exp/
+run_phase1_good_boolq_adapters/
+*.log
+terminal_history.txt
+probe_results_layer*.txt
+# HuggingFace tokenizer files
+**/tokenizer.json
+**/tokenizer_config.json
+**/vocab.json
+**/merges.txt
+**/special_tokens_map.json
+
+__archive__/
+runs_phase1/
+runs_phase2/
+# accidental nested repo
+helm/
+analysis/

@@ -14,7 +14,12 @@ def log_trainable_params(logger: logging.Logger, model) -> Tuple[int, int]:
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     pct = 100.0 * trainable / total if total else 0.0
-    logger.info("Params — total: %s | trainable: %s (%.4f%%)", f"{total:,}", f"{trainable:,}", pct)
+    logger.info(
+        "Params — total: %s | trainable: %s (%.4f%%)",
+        f"{total:,}",
+        f"{trainable:,}",
+        pct,
+    )
     return total, trainable
 
 
