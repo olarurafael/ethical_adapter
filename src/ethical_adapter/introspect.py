@@ -1,5 +1,4 @@
 # src/ethical_adapter/introspect.py
-import torch
 import torch.nn as nn
 from .core.adapter import ParallelLinear
 
@@ -26,7 +25,9 @@ def print_adapter_summary(model: nn.Module):
     print(f"{'Layer':60s} | {'Params':>10s} | {'In':>6s} | {'Out':>6s} | {'Rank':>4s}")
     print("-" * 95)
     for name, module, count in adapters:
-        print(f"{name:60s} | {count:10,d} | {module.in_features:6d} | {module.out_features:6d} | {module.adapter.rank:4d}")
+        print(
+            f"{name:60s} | {count:10,d} | {module.in_features:6d} | {module.out_features:6d} | {module.adapter.rank:4d}"
+        )
     print("-" * 95)
     total = sum(c for _, _, c in adapters)
     print(f"Total adapter parameters: {total:,}")

@@ -4,9 +4,10 @@ import os
 import logging
 from safetensors.torch import load_file
 
-def load_adapters_from_checkpoint(model, 
-                                  checkpoint_dir, 
-                                  logger: logging.Logger | None = None):
+
+def load_adapters_from_checkpoint(
+    model, checkpoint_dir, logger: logging.Logger | None = None
+):
     """
     Load adapter weights from a safetensors checkpoint (runs/.../best).
     """
@@ -14,7 +15,9 @@ def load_adapters_from_checkpoint(model,
 
     adapter_path = os.path.join(checkpoint_dir, "model.safetensors")
     if not os.path.exists(adapter_path):
-        raise FileNotFoundError(f"[ERROR] No model.safetensors found in {checkpoint_dir}")
+        raise FileNotFoundError(
+            f"[ERROR] No model.safetensors found in {checkpoint_dir}"
+        )
 
     logger.info(f" Loading adapter weights from {adapter_path}")
 
@@ -29,12 +32,14 @@ def load_adapters_from_checkpoint(model,
     dtype = next(model.parameters()).dtype
 
     # move adapter modules to correct device/dtype
-    for name, module in model.named_modules():
-        if "adapter" in name:
-            module.to(device=device, dtype=dtype)
+    for module in model.modules():
+        if hasattr(module, "adapter") and module.adapter is not None:
+            module.adapter.to(device=device, dtype=dtype)
 
-    # move the state tensors and load
-    adapter_state = {k: v.to(device) for k, v in adapter_state.items()}
+    # move the state tensors to correct device and dtype, then load
+    adapter_state = {
+        k: v.to(device=device, dtype=dtype) for k, v in adapter_state.items()
+    }
     missing, unexpected = model.load_state_dict(adapter_state, strict=False)
 
     if missing:
