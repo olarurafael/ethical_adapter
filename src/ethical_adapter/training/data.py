@@ -154,6 +154,12 @@ def build_phase_dataset(config, logger, phase):
         task_cfg = by_role("task")
         used = task_cfg if task_cfg else all_cfg
         return _load_and_merge(config, used)
+    
+    if phase == "alignment":
+        align_cfg = by_role("alignment")
+        if not align_cfg:
+            raise ValueError("No datasets with role='alignment' configured.")
+        return _load_and_merge(config, align_cfg)
 
     # ---- Phase 2: toxicity datasets ----
     if phase == "gate_toxicity":

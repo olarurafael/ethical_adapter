@@ -5,6 +5,8 @@ __pycache__/
 *.egg
 *.bin
 *.safetensors
+*.png
+*.txt
 runs/
 data/
 .venv/
@@ -28,6 +30,7 @@ probe_results_layer*.txt
 **/vocab.json
 **/merges.txt
 **/special_tokens_map.json
+.vscode
 
 __archive__/
 runs_phase1/
