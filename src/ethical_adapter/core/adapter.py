@@ -107,6 +107,10 @@ class ParallelLinear(nn.Module):
         logits = self.gate_store.get("logits", None)
         if logits is None:
             return torch.ones(batch_size, device=x.device, dtype=x.dtype)
+        
+
+        assert self.gate_index is not None, "gate_index not set!"
+        assert self.gate_index < logits.size(1), f"gate_index {self.gate_index} >= num_gates {logits.size(1)}"
 
         # Select this adapter’s gate index
         gate_logits = logits[:, self.gate_index]  # shape (B,)

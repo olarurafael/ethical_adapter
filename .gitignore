@@ -35,3 +35,4 @@ runs_phase2/
 # accidental nested repo
 helm/
 analysis/
+.vscode/settings.json

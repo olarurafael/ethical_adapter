@@ -21,9 +21,9 @@ class GateConfig:
             raise ValueError("hidden_size must be > 0")
         if self.num_gates <= 0:
             raise ValueError("num_gates must be > 0")
-        if self.activation not in {"relu", "gelu", "silu"}:
+        if self.activation not in {"relu", "gelu", "silu", "none"}:
             raise ValueError("activation must be one of: relu, gelu, silu")
-        if self.pooling not in {"mean", "cls"}:
+        if self.pooling not in {"mean", "cls", "max", "logsumexp"}:
             raise ValueError("pooling must be 'mean' or 'cls'")
 
 

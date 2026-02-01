@@ -8,6 +8,7 @@ ACTIVATIONS = {
     "relu": F.relu,
     "gelu": F.gelu,
     "silu": F.silu,
+    "none": lambda x: x,
 }
 
 
@@ -36,24 +37,27 @@ class GateController(nn.Module):
             raise ValueError("hidden_dim must be > 0")
         if num_gates <= 0:
             raise ValueError("num_gates must be > 0")
-        if pooling not in {"mean", "cls", "max"}:
+        if pooling not in {"mean", "cls", "max", 'none', "logsumexp"}:
             raise ValueError("pooling must be 'mean' or 'cls'")
         if temperature <= 0:
             raise ValueError("temperature must be > 0")
 
-        self.fc1 = nn.Linear(input_dim, hidden_dim, bias=False)
-        self.fc2 = nn.Linear(hidden_dim, num_gates, bias=False)
+        # self.fc1 = nn.Linear(input_dim, hidden_dim, bias=False)
+        # self.fc2 = nn.Linear(hidden_dim, num_gates, bias=False)
+        self.fc = nn.Linear(input_dim,num_gates,bias=True)
         self.act_name = activation
         self.temperature = temperature
         self.pooling = pooling
         self.last_gates = None
+        # self.norm = nn.LayerNorm(input_dim)
         self.norm = nn.LayerNorm(input_dim)
-        self.dropout = nn.Dropout(0.1)
+        # self.dropout = nn.Dropout(0.1)
 
-        nn.init.xavier_uniform_(self.fc1.weight)
+        #nn.init.xavier_uniform_(self.fc1.weight)
         # nn.init.zeros_(self.fc1.bias)
-        nn.init.xavier_uniform_(self.fc2.weight)
-        # nn.init.zeros_(self.fc2.bias)
+        # nn.init.xavier_uniform_(self.fc2.weight)
+        nn.init.zeros_(self.fc.bias)
+        nn.init.zeros_(self.fc.weight)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """
@@ -67,16 +71,27 @@ class GateController(nn.Module):
             pooled = hidden_states.mean(dim=1)
         elif self.pooling == "max":
             pooled = hidden_states.max(dim=1).values
-        else:  # "cls": take first token
+        elif self.pooling == "cls":
             pooled = hidden_states[:, 0, :]
+        elif self.pooling == "logsumexp":
+            # soft-max pooling, more sensitive than mean, less brittle than max
+            pooled = torch.logsumexp(hidden_states * 5.0, dim=1) / 5.0
+
+        elif self.pooling == "topk":
+            k = min(4, hidden_states.size(1))
+            pooled = hidden_states.topk(k, dim=1).values.mean(dim=1)
+        else:  # "none"
+            pooled = hidden_states  # (batch, seq, dim)
 
         pooled = self.norm(pooled)
 
-        h = self.fc1(pooled)
-        h = ACTIVATIONS[self.act_name](h)
-        h = self.dropout(h)
+        # h = self.fc1(pooled)
+        # h = ACTIVATIONS[self.act_name](h)
+        # # h = self.dropout(h)
 
-        logits = self.fc2(h) / self.temperature
+        # logits = self.fc2(h) / self.temperature
+        logits = self.fc(pooled) / self.temperature
+
         self.last_gate_logits = logits
 
         return logits
@@ -115,8 +130,6 @@ class GatedSourceWrapper(nn.Module):
         else:
             raise TypeError("GatedSourceWrapper expects tensor or tuple output.")
 
-        if isinstance(hidden, torch.Tensor):
-            print("GatedSourceWrapper output.shape:", output.shape)
 
         # Compute gate logits
         logits = self.gate_controller(hidden)

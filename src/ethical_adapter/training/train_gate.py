@@ -21,7 +21,7 @@ from ethical_adapter.training.data import (
 from ethical_adapter.core.adapter import ParallelLinear
 from ethical_adapter.training.optim_utils import (
     prepare_model_for_gate_training,
-    get_optimizer,
+    get_gate_optimizer,
     get_scheduler,
 )
 
@@ -41,7 +41,7 @@ def eval_step(model, loader):
     for batch in loader:
         batch = {k: v.to(model.device) for k, v in batch.items()}
 
-        model(**batch, labels=batch["input_ids"])
+        _ = model(**batch)
 
         gate_logits = model.gate_store["logits"]
 
@@ -135,10 +135,8 @@ def main(config):
     # --------------------------------------------------------
     # Optimizer (gate params only)
     # --------------------------------------------------------
-    optimizer = get_optimizer(
-        model,
+    optimizer = get_gate_optimizer(
         gate_controller,
-        phase="gate_toxicity",
         lr=config["lr"],
         weight_decay=config.get("weight_decay", 0.01),
     )
@@ -171,7 +169,7 @@ def main(config):
                 optimizer.zero_grad()
 
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
-                _ = model(**batch, labels=batch["input_ids"])
+                _ = model(**batch)
 
                 gate_logits = model.gate_store["logits"]
 
