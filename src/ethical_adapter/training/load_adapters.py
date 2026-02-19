@@ -13,16 +13,38 @@ def load_adapters_from_checkpoint(
     """
     logger = logger or logging.getLogger(__name__)
 
-    adapter_path = os.path.join(checkpoint_dir, "model.safetensors")
-    if not os.path.exists(adapter_path):
-        raise FileNotFoundError(
-            f"[ERROR] No model.safetensors found in {checkpoint_dir}"
+    import json
+    from glob import glob
+
+    index_path = os.path.join(checkpoint_dir, "model.safetensors.index.json")
+
+    state = {}
+
+    if os.path.exists(index_path):
+        logger.info("Detected sharded checkpoint")
+
+        with open(index_path, "r") as f:
+            index = json.load(f)
+
+        shard_files = sorted(
+            set(os.path.join(checkpoint_dir, f) for f in index["weight_map"].values())
         )
 
-    logger.info(f" Loading adapter weights from {adapter_path}")
+        for shard in shard_files:
+            logger.info(f"Loading shard: {shard}")
+            shard_state = load_file(shard, device="cpu")
+            state.update(shard_state)
 
-    # load tensors
-    state = load_file(adapter_path, device="cpu")
+    else:
+        adapter_path = os.path.join(checkpoint_dir, "model.safetensors")
+        if not os.path.exists(adapter_path):
+            raise FileNotFoundError(
+                f"[ERROR] No model.safetensors or index found in {checkpoint_dir}"
+            )
+
+        logger.info(f"Loading adapter weights from {adapter_path}")
+        state = load_file(adapter_path, device="cpu")
+
 
     # keep only adapter-related weights
     adapter_state = {k: v for k, v in state.items() if "adapter" in k}

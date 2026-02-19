@@ -20,6 +20,26 @@ def compute_delta_w(pl: ParallelLinear) -> torch.Tensor:
     B = pl.adapter.B.weight
     return pl.adapter.scaling * (B @ A)
 
+def project_delta_w(dW: torch.Tensor, proj_entry: dict):
+    """
+    Coordinate projector using stored top-m indices.
+    """
+
+    idx = proj_entry["idx"].to(dW.device)
+
+    flat = dW.flatten()
+
+    flat_A = torch.zeros_like(flat)
+    flat_A[idx] = flat[idx]
+
+    flat_T = flat - flat_A
+
+    dW_A = flat_A.view_as(dW)
+    dW_T = flat_T.view_as(dW)
+
+    return dW_A, dW_T
+
+
 
 def alignguard_loss(
     model,
@@ -50,16 +70,22 @@ def alignguard_loss(
             continue
 
         dW = compute_delta_w(pl)  # (out, in)
-        Fdiag = fisher_dict[key].to(device=dW.device, dtype=dW.dtype)
+        proj_entry = fisher_dict[key]  # <-- fisher entry is a dict now
 
-        # Alignment subspace projector (coordinate-mask approximation)
-        M = (Fdiag > 0).to(dW.dtype)
+        # projection into alignment/task subspaces
+        dW_A, dW_T = project_delta_w(dW, proj_entry)
 
-        dW_A = M * dW
-        dW_T = (1.0 - M) * dW
+        # diagonal Fisher weights (optional)
+        Fdiag = proj_entry.get("Fdiag", None)
+        if Fdiag is not None:
+            Fdiag = Fdiag.to(device=dW.device, dtype=dW.dtype)
+        else:
+            Fdiag = torch.ones_like(dW)
+
 
         # (1) Alignment preservation: Fisher-weighted norm on alignment component
-        loss_align = loss_align + torch.sum(Fdiag * dW_A * dW_A)
+        loss_align = loss_align + torch.sum(Fdiag * (dW_A ** 2))
+
 
         # (2) Task stability: optional curvature-weighted norm on task component
         if task_curv_dict is not None and (key in task_curv_dict) and (lambda_task > 0):
@@ -67,13 +93,23 @@ def alignguard_loss(
             loss_task = loss_task + torch.sum(Hdiag * dW_T * dW_T)
 
         # (3) Riemannian collision: coordinate overlap
-        loss_riem = loss_riem + torch.sum(torch.abs(dW_A * dW_T))
+        # smooth overlap weighting η
+        beta = 10.0
+        tau = 0.01
+
+        mag = torch.abs(dW_A + dW_T)
+        eta = 1.0 + beta * torch.sigmoid(mag - tau)
+
+        loss_riem = loss_riem + torch.sum(eta * dW_A * dW_T)
+
 
         # (4) Geodesic collision: squared cosine similarity
-        a = dW_A.flatten()
-        t = dW_T.flatten()
-        denom = (a.norm() * t.norm() + 1e-8)
-        cos2 = (torch.dot(a, t) / denom) ** 2
+        dot = torch.sum(Fdiag * dW_A * dW_T)
+
+        normA = torch.sqrt(torch.sum(Fdiag * (dW_A ** 2)) + 1e-8)
+        normT = torch.sqrt(torch.sum(Fdiag * (dW_T ** 2)) + 1e-8)
+
+        cos2 = (dot / (normA * normT + 1e-8)) ** 2
         loss_geo = loss_geo + cos2
 
     return (
@@ -97,15 +133,41 @@ def init_task_curvature(model) -> dict:
     return curv
 
 
+
+def build_alignment_mask(Fdiag: torch.Tensor, frac: float = 0.1) -> torch.Tensor:
+    """
+    Builds top-fraction Fisher mask.
+    Keeps highest Fisher entries as alignment-critical.
+    """
+    flat = Fdiag.flatten()
+    k = max(1, int(frac * flat.numel()))
+
+    topk_vals = torch.topk(flat, k, largest=True).values
+    threshold = topk_vals.min()
+
+    mask = (Fdiag >= threshold).to(Fdiag.dtype)
+    return mask
+
 @torch.no_grad()
 def update_task_curvature(model, task_curv: dict, beta: float):
     """
-    Updates EMA curvature proxy using current ΔW magnitude: curv <- beta*curv + (1-beta)*(ΔW^2)
-    Stored on CPU to save VRAM.
+    EMA of squared gradients mapped into ΔW space.
     """
     for name, pl in iter_parallel_linear(model):
         key = f"{name}.adapter"
         if key not in task_curv:
             continue
-        dW = compute_delta_w(pl).detach().float().cpu()
-        task_curv[key].mul_(beta).add_((1.0 - beta) * (dW * dW))
+
+        A = pl.adapter.A.weight
+        B = pl.adapter.B.weight
+
+        if A.grad is None or B.grad is None:
+            continue
+
+        gW = pl.adapter.scaling * (
+            B.grad @ A.detach() + B.detach() @ A.grad
+        )
+
+        gW = gW.detach().float().cpu()
+
+        task_curv[key].mul_(beta).add_((1.0 - beta) * (gW ** 2))

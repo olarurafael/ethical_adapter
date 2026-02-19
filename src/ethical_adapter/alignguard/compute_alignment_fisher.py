@@ -1,4 +1,4 @@
-# scripts/compute_alignment_fisher.py
+# src/ethical_adapter/alignguard/compute_alignment_fisher.py
 
 import torch
 from torch.utils.data import DataLoader
@@ -23,7 +23,7 @@ from ethical_adapter.alignguard.alignguard_utils import (
 DEVICE = "cuda"
 DTYPE = torch.bfloat16
 BATCH_SIZE = 1              # keep 1 for stable Fisher
-MAX_BATCHES = None          # set to e.g. 500 to cap runtime
+MAX_BATCHES = 1000          # set to e.g. 500 to cap runtime
 OUT_PATH = "alignment_fisher.pt"
 
 
@@ -71,7 +71,7 @@ def main(cfg):
     model.to(DEVICE)
 
     # ---- alignment dataset ----
-    logger = DummyLogger
+    logger = DummyLogger()
     align_ds = build_phase_dataset(cfg, logger=logger, phase="adapters")
     align_ds = tokenize_dataset(align_ds, tokenizer, cfg)
 
@@ -133,8 +133,31 @@ def main(cfg):
     for k in fisher:
         fisher[k] /= max(step, 1)
 
-    torch.save(fisher, OUT_PATH)
+
+    # ---- build projector dictionaries ----
+    proj = {}
+
+    TOP_M = cfg.get("alignguard_topm", 1024)
+
+    for key, Fdiag in fisher.items():
+
+        flat = Fdiag.flatten()
+        d = flat.numel()
+
+        m = min(TOP_M, d)
+
+        # indices of largest Fisher entries
+        idx = torch.topk(flat, k=m, largest=True).indices.cpu()
+
+        proj[key] = {
+            "idx": idx,               # (m,)
+            "shape": Fdiag.shape,     # (out, in)
+            "Fdiag": Fdiag.clone()
+        }
+
+    torch.save(proj, OUT_PATH)
     print(f"\nSaved alignment Fisher to: {OUT_PATH}")
+
 
 
 # ----------------------------

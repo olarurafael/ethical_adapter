@@ -38,4 +38,15 @@ class AlignGuard:
 
         filtered = grad_vec * mask
 
-        vector_to_parameters(filtered, self.params)
+        offset = 0
+        for p in self.params:
+            numel = p.numel()
+            grad_slice = filtered[offset: offset + numel].view_as(p)
+
+            if p.grad is None:
+                p.grad = grad_slice.clone()
+            else:
+                p.grad.copy_(grad_slice)
+
+            offset += numel
+
