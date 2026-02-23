@@ -4,10 +4,6 @@ import time
 import os
 from pathlib import Path
 
-import subprocess
-import sys
-
-
 HIDDEN_SIZES = [512] #512 is the size for only 1 fc, not fc1 or fc2.
 ACTIVATIONS = ["relu"] # only relu works
 POOLINGS = ["logsumexp"]  # max pooling NEVER works
@@ -36,29 +32,6 @@ def write_config(text, path, **kwargs):
 def latest_best(run_root):
     candidates = sorted(run_root.glob("*/best"), key=lambda p: p.parent.name)
     return candidates[-1]
-
-
-def run_and_tee(cmd, log_path, env=None):
-
-    with open(log_path, "w") as logfile:
-
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=env,
-            text=True,
-            bufsize=1,
-        )
-
-        for line in process.stdout:
-            sys.stdout.write(line)   # show in terminal
-            logfile.write(line)      # save to file
-
-        process.wait()
-
-        if process.returncode != 0:
-            raise subprocess.CalledProcessError(process.returncode, cmd)
 
 for (
     hidden_size,

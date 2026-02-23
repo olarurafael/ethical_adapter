@@ -3,6 +3,10 @@ import logging
 import torch
 import random
 import os
+from dataclasses import dataclass
+from torch.nn.utils.rnn import pad_sequence
+import torch
+
 from typing import Dict, List, Any
 
 from datasets import (
@@ -11,6 +15,41 @@ from datasets import (
     Dataset,
     load_from_disk,
 )
+
+from ethical_adapter.training.glue_format import FORMATTERS
+
+@dataclass
+class SupervisedCollator:
+    tokenizer: any
+
+    def __call__(self, features):
+        input_ids = [f["input_ids"] for f in features]
+        attention_mask = [f["attention_mask"] for f in features]
+        labels = [f["labels"] for f in features]
+
+        input_ids = pad_sequence(
+            input_ids,
+            batch_first=True,
+            padding_value=self.tokenizer.pad_token_id,
+        )
+
+        attention_mask = pad_sequence(
+            attention_mask,
+            batch_first=True,
+            padding_value=0,
+        )
+
+        labels = pad_sequence(
+            labels,
+            batch_first=True,
+            padding_value=-100,
+        )
+
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+        }
 
 
 def smart_load_dataset(name, config_name=None, split=None, **kwargs):
@@ -152,6 +191,11 @@ def build_phase_dataset(config, logger, phase):
     # ---- Phase 1: normal text datasets ----
     if phase == "adapters":
         task_cfg = by_role("task")
+
+        # if datasets specify task_type → supervised GLUE mode
+        if any("task_type" in d for d in task_cfg):
+            return load_supervised_task_dataset(config, task_cfg)
+
         used = task_cfg if task_cfg else all_cfg
         return _load_and_merge(config, used)
     
@@ -167,6 +211,102 @@ def build_phase_dataset(config, logger, phase):
         return load_alignment_phase(config, align_cfg)
 
     raise ValueError(f"Unknown phase: {phase}")
+
+
+def tokenize_supervised_dataset(ds, tokenizer, config):
+    max_length = config["max_length"]
+
+    def tok_fn(ex):
+        messages = [
+            {"role": "user", "content": ex["prompt"]},
+            {"role": "assistant", "content": ex["answer"]},
+        ]
+
+        # Render chat text first (string)
+        full_text = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+
+        prompt_text = tokenizer.apply_chat_template(
+            [{"role": "user", "content": ex["prompt"]}],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+
+        # Now tokenize normally → returns lists of ints
+        full_enc = tokenizer(
+            full_text,
+            truncation=True,
+            max_length=max_length,
+            padding=False,
+        )
+
+        prompt_enc = tokenizer(
+            prompt_text,
+            truncation=True,
+            max_length=max_length,
+            padding=False,
+        )
+
+        input_ids = full_enc["input_ids"]
+        labels = input_ids.copy()
+
+        cut = min(len(prompt_enc["input_ids"]), len(labels))
+        for i in range(cut):
+            labels[i] = -100
+
+        attention_mask = [1] * len(input_ids)
+
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+            "labels": torch.tensor(labels, dtype=torch.long),
+        }
+
+    new_ds = ds.map(tok_fn, remove_columns=ds.column_names)
+    new_ds.set_format(type="torch")
+    return new_ds
+
+    max_length = config["max_length"]
+
+    def tok_fn(ex):
+        messages = [
+            {"role": "user", "content": ex["prompt"]},
+            {"role": "assistant", "content": ex["answer"]},
+        ]
+
+        full_ids = tokenizer.apply_chat_template(
+            messages,
+            tokenize=True,
+            add_generation_prompt=False,
+        )
+
+        prompt_ids = tokenizer.apply_chat_template(
+            [{"role": "user", "content": ex["prompt"]}],
+            tokenize=True,
+            add_generation_prompt=True,
+        )
+
+        input_ids = full_ids[:max_length]
+        labels = input_ids.copy()
+
+        cut = min(len(prompt_ids), len(labels))
+        for i in range(cut):
+            labels[i] = -100
+
+        attention_mask = [1] * len(input_ids)
+
+        return {
+            "input_ids": torch.tensor(input_ids),
+            "attention_mask": torch.tensor(attention_mask),
+            "labels": torch.tensor(labels),
+        }
+
+    new_ds = ds.map(tok_fn, remove_columns=ds.column_names)
+    new_ds.set_format(type="torch")
+    return new_ds
 
 
 def tokenize_dataset(ds, tokenizer, config):
@@ -204,3 +344,44 @@ def tokenize_dataset(ds, tokenizer, config):
 
     new_ds.set_format(type="torch")
     return new_ds
+
+def load_supervised_task_dataset(config, datasets_cfg):
+    rows = []
+    max_len = config.get("max_train_samples")
+
+    for dcfg in datasets_cfg:
+        name = dcfg["name"]
+        task = dcfg.get("task_type")
+
+        if task not in FORMATTERS:
+            raise ValueError(f"Unknown task_type: {task}")
+
+        formatter = FORMATTERS[task]
+
+        ds = smart_load_dataset(
+            name,
+            dcfg.get("config"),
+            split=dcfg.get("split", "train"),
+            cache_dir=config["data_dir"],
+        )
+
+        for ex in ds:
+            # skip missing labels (e.g. MNLI test)
+            if "label" not in ex or ex["label"] == -1:
+                continue
+
+            prompt, answer = formatter(ex)
+
+            rows.append(
+                {
+                    "prompt": prompt,
+                    "answer": answer,
+                }
+            )
+
+    random.shuffle(rows)
+
+    if max_len:
+        rows = rows[:max_len]
+
+    return Dataset.from_list(rows)

@@ -16,6 +16,7 @@ from ethical_adapter.training.load_adapters import load_adapters_from_checkpoint
 from ethical_adapter.training.data import (
     build_phase_dataset,
     tokenize_dataset,
+    tokenize_supervised_dataset
 )
 from ethical_adapter.core.adapter import ParallelLinear
 from ethical_adapter.training.optim_utils import (
@@ -28,7 +29,7 @@ from ethical_adapter.alignguard.alignguard_utils import (
     init_task_curvature,
     update_task_curvature,
 )
-
+from ethical_adapter.training.data import SupervisedCollator
 
 
 # eval step for adapter training
@@ -40,10 +41,12 @@ def eval_step(model, loader):
 
     for batch in loader:
         batch = {k: v.to(model.device) for k, v in batch.items()}
-        outputs = model(**batch, labels=batch["input_ids"])
-        loss = outputs.loss
-
-        total_loss += loss.item()
+        outputs = model(
+            input_ids=batch["input_ids"],
+            attention_mask=batch["attention_mask"],
+            labels=batch["labels"],
+        )
+        total_loss += outputs.loss.item()
         count += 1
 
     return total_loss / max(count, 1)
@@ -130,21 +133,30 @@ def main(config):
         logger.info(f"AlignGuard enabled. Fisher entries: {len(alignment_fisher)}")
     else:
         logger.info("AlignGuard disabled (no alignment_fisher_path set).")
+        print("WARNING: You are training with AlignGuard objectives disabled. Set 'alignment_fisher_path' in")
 
 
     # load datasets for this phase
     full_ds = build_phase_dataset(config, logger, phase="adapters")
     splits = full_ds.train_test_split(test_size=0.1, seed=42)
 
-    train_ds = tokenize_dataset(splits["train"], tokenizer, config)
-    val_ds = tokenize_dataset(splits["test"], tokenizer, config)
+    if "prompt" in full_ds.column_names:
+        collator = SupervisedCollator(tokenizer)
+        train_ds = tokenize_supervised_dataset(splits["train"], tokenizer, config)
+        val_ds   = tokenize_supervised_dataset(splits["test"], tokenizer, config)
+    else:
+        collator = None
+        train_ds = tokenize_dataset(splits["train"], tokenizer, config)
+        val_ds   = tokenize_dataset(splits["test"], tokenizer, config)
+
 
     loader_kwargs = dict(
         batch_size=config["batch_size"],
         num_workers=int(config.get("num_workers", 0)),
     )
-    train_loader = DataLoader(train_ds, shuffle=True, **loader_kwargs)
-    val_loader = DataLoader(val_ds, shuffle=False, **loader_kwargs)
+
+    train_loader = DataLoader(train_ds, shuffle=True, collate_fn=collator, **loader_kwargs)
+    val_loader   = DataLoader(val_ds, shuffle=False, collate_fn=collator, **loader_kwargs)
 
     # optimizer + scheduler
     optimizer = get_adapter_optimizer(
@@ -179,7 +191,11 @@ def main(config):
 
 
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
-                outputs = model(**batch, labels=batch["input_ids"])
+                outputs = model(
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    labels=batch["labels"],
+                )
                 loss = outputs.loss / grad_accum
 
                 # ---- AlignGuard-LoRA objective (adapter-space, ΔW-based) ----
