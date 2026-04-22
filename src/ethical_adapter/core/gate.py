@@ -118,6 +118,15 @@ class GatedSourceWrapper(nn.Module):
         self.gate_store = gate_store
         self.store_key = store_key
 
+    def __getattr__(self, name):
+        # Preserve the wrapped module's interface so transformer internals
+        # can still access attributes such as attention_type.
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            base = super().__getattr__("base")
+            return getattr(base, name)
+
     def forward(self, *args, **kwargs):
         # Run the original module first
         output = self.base(*args, **kwargs)

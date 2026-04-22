@@ -4,13 +4,13 @@ import time
 import os
 from pathlib import Path
 
-HIDDEN_SIZES = [512] #512 is the size for only 1 fc, not fc1 or fc2.
+HIDDEN_SIZES = [512, 256, 1024] #512 is the size for only 1 fc, not fc1 or fc2.
 ACTIVATIONS = ["relu"] # only relu works
 POOLINGS = ["logsumexp"]  # max pooling NEVER works
-TEMPERATURES = [1] # 0.7 helps output much more confident numbers than 1.
+TEMPERATURES = [1, 0.7] # 0.7 helps output much more confident numbers than 1.
 EPOCHS = [8] # early stop stops longer intervention
-BATCH_SIZES = [8] # 8 and 2 seems to be a local minima.
-GRAD_ACCUMS = [2] # local minima
+BATCH_SIZES = [8, 16, 4] # 8 and 2 seems to be a local minima.
+GRAD_ACCUMS = [2, 4, 8] # local minima
 # LEARNING_RATES = [3e-3]
 LEARNING_RATES = [5e-3]
 

@@ -1,13 +1,20 @@
 # src/ethical_adapter/core/adapter.py
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from typing import Optional
 
 
 class LoRAAdapter(nn.Module):
     """
-    A minimal low-rank adapter: ΔW = B @ A.
-    Implemented as two linear layers with no bias: A: in->r, B: r->out.
+    A minimal low-rank adapter with effective update:
+        ΔW = scaling * (B @ A)
+    where:
+        A.weight: (rank, in_features)
+        B.weight: (out_features, rank)
+
+    Forward is implemented directly through ΔW so we can retain the exact
+    dL/d(ΔW) used in the model graph.
     """
 
     def __init__(
@@ -32,12 +39,17 @@ class LoRAAdapter(nn.Module):
         nn.init.normal_(self.A.weight, mean=0.0, std=1e-4)
         nn.init.zeros_(self.B.weight)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Optional dropout on the adapter path to regularize
-        z = self.A(self.dropout(x))
-        z = self.B(z)
-        return z * self.scaling
+    def delta_weight(self) -> torch.Tensor:
+        """
+        Returns the effective LoRA weight update ΔW with shape:
+            (out_features, in_features)
+        """
+        return self.scaling * (self.B.weight @ self.A.weight)
 
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_drop = self.dropout(x)
+        dW = self.delta_weight()
+        return F.linear(x_drop, dW, bias=None)
 
 class ParallelLinear(nn.Module):
     """
@@ -84,6 +96,10 @@ class ParallelLinear(nn.Module):
         self.force_gate_open = False
         self.force_gate_closed = False
 
+        # AlignGuard hooks
+        self.capture_delta_grad = False
+        self._last_delta_w = None
+
     @property
     def in_features(self):  # convenience for debugging
         return self.base.in_features
@@ -125,10 +141,20 @@ class ParallelLinear(nn.Module):
         # Expand to (batch, 1, 1, ...) to match adapter_out dims
         gate_values_expanded = gate_values.view(-1, *([1] * (x.dim() - 1)))
         base_out = self.base(x)
-        adapter_raw = self.adapter(x)
+
+        # Compute the exact ΔW used in forward and optionally retain its grad
+        x_drop = self.adapter.dropout(x)
+        delta_w = self.adapter.delta_weight()
+        
+        if self.capture_delta_grad and delta_w.requires_grad:
+            self._last_delta_w = delta_w
+            self._last_delta_w.retain_grad()
+        else:
+            self._last_delta_w = None
+
+        adapter_raw = F.linear(x_drop, delta_w, bias=None)
         adapter_out = gate_values_expanded * adapter_raw
 
-        # store debug values
         self.last_gate_logits = gate_logits.detach().float()
         self.last_gate_values = gate_values.detach().float()
 
