@@ -39,3 +39,5 @@ runs_phase2/
 helm/
 analysis/
 .vscode/settings.json
+*.json
+*.jsonl

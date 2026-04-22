@@ -14,9 +14,10 @@ from ethical_adapter.core.utils import print_param_summary
 from ethical_adapter.training.early_stop_manager import EarlyStopManager
 from ethical_adapter.training.load_adapters import load_adapters_from_checkpoint
 from ethical_adapter.training.data import (
-    build_phase_dataset,
-    tokenize_dataset,
-    tokenize_supervised_dataset
+    build_task_dataset,
+    build_alignment_dataset,
+    prepare_task_dataset,
+    prepare_alignment_dataset,
 )
 from ethical_adapter.core.adapter import ParallelLinear
 from ethical_adapter.training.optim_utils import (
@@ -26,13 +27,35 @@ from ethical_adapter.training.optim_utils import (
 )
 from ethical_adapter.alignguard.alignguard_utils import (
     alignguard_loss,
-    init_task_curvature,
-    update_task_curvature,
+    init_task_curvature_identity,
+    iter_parallel_linear,
+    set_capture_delta_grad,
+    get_last_delta_grad,
+    compute_delta_w,
 )
-from ethical_adapter.training.data import SupervisedCollator
+from ethical_adapter.alignguard.blockwise_subspace import BlockwiseOjaEstimator
 
 
 # eval step for adapter training
+# @torch.no_grad()
+# def eval_step(model, loader):
+#     model.eval()
+#     total_loss = 0.0
+#     count = 0
+
+#     for batch in loader:
+#         batch = {k: v.to(model.device) for k, v in batch.items()}
+#         outputs = model(
+#             input_ids=batch["input_ids"],
+#             attention_mask=batch["attention_mask"],
+#             labels=batch["labels"],
+#         )
+#         total_loss += outputs.loss.item()
+#         count += 1
+
+#     return total_loss / max(count, 1)
+
+
 @torch.no_grad()
 def eval_step(model, loader):
     model.eval()
@@ -41,16 +64,80 @@ def eval_step(model, loader):
 
     for batch in loader:
         batch = {k: v.to(model.device) for k, v in batch.items()}
+        labels = batch["labels"] if "labels" in batch else batch["input_ids"]
+
         outputs = model(
             input_ids=batch["input_ids"],
             attention_mask=batch["attention_mask"],
-            labels=batch["labels"],
+            labels=labels,
         )
         total_loss += outputs.loss.item()
         count += 1
 
     return total_loss / max(count, 1)
 
+    
+@torch.no_grad()
+def _cycle_loader(loader):
+    while True:
+        for batch in loader:
+            yield batch
+
+
+def recompute_alignment_projector(
+    model,
+    align_batch_iter,
+    num_batches: int,
+    block_size: int,
+    rank_per_block: int,
+    eta0: float,
+    orth_every: int,
+    init_samples: int,
+):
+    """
+    Recompute blockwise Fisher projector from fresh alignment minibatches.
+    """
+    was_training = model.training
+    model.eval()
+
+    estimators = {}
+    for name, pl in iter_parallel_linear(model):
+        key = f"{name}.adapter"
+        dW = compute_delta_w(pl)
+        estimators[key] = BlockwiseOjaEstimator(
+            total_dim=dW.numel(),
+            block_size=block_size,
+            rank_per_block=rank_per_block,
+            eta0=eta0,
+            orth_every=orth_every,
+            init_samples=init_samples,
+            device="cpu",
+            dtype=torch.float32,
+        )
+
+    set_capture_delta_grad(model, True)
+
+    for _ in range(num_batches):
+        batch = next(align_batch_iter)
+        batch = {k: v.to(model.device) for k, v in batch.items()}
+
+        model.zero_grad(set_to_none=True)
+        outputs = model(**batch, labels=batch["input_ids"])
+        outputs.loss.backward()
+
+        for name, pl in iter_parallel_linear(model):
+            key = f"{name}.adapter"
+            gW = get_last_delta_grad(pl)
+            if gW is not None:
+                estimators[key].update(gW.detach().float().cpu().flatten())
+
+    set_capture_delta_grad(model, False)
+    model.zero_grad(set_to_none=True)
+
+    if was_training:
+        model.train()
+
+    return {k: est.finalize() for k, est in estimators.items()}
 
 # adapter training main function
 def main(config):
@@ -123,12 +210,19 @@ def main(config):
 
     use_alignguard = alignment_fisher is not None
 
+    refresh_every = int(ag_cfg.get("refresh_every", 1000))
+    refresh_batches = int(ag_cfg.get("refresh_batches", 64))
+    block_size = int(config.get("alignguard_block_size", 262144))
+    rank_per_block = int(config.get("alignguard_rank_per_block", 4))
+    oja_eta0 = float(config.get("alignguard_oja_eta0", 0.5))
+    oja_orth_every = int(config.get("alignguard_oja_orth_every", 10))
+    oja_init_samples = int(config.get("alignguard_oja_init_samples", rank_per_block))
+
     # Optional task-curvature proxy (EMA); init only if AlignGuard is on
     task_curvature = None
     if use_alignguard and float(ag_cfg.get("lambda_task", 0.0)) > 0.0:
-        task_curvature = init_task_curvature(model)
-        logger.info(f"Initialized task curvature buffers: {len(task_curvature)} layers")
-
+        task_curvature = init_task_curvature_identity(model)
+        logger.info(f"Initialized task regularizer H=I for {len(task_curvature)} layers")
     if use_alignguard:
         logger.info(f"AlignGuard enabled. Fisher entries: {len(alignment_fisher)}")
     else:
@@ -136,18 +230,11 @@ def main(config):
         print("WARNING: You are training with AlignGuard objectives disabled. Set 'alignment_fisher_path' in")
 
 
-    # load datasets for this phase
-    full_ds = build_phase_dataset(config, logger, phase="adapters")
-    splits = full_ds.train_test_split(test_size=0.1, seed=42)
+    full_task_ds = build_task_dataset(config, logger)
+    splits = full_task_ds.train_test_split(test_size=0.1, seed=42)
 
-    if "prompt" in full_ds.column_names:
-        collator = SupervisedCollator(tokenizer)
-        train_ds = tokenize_supervised_dataset(splits["train"], tokenizer, config)
-        val_ds   = tokenize_supervised_dataset(splits["test"], tokenizer, config)
-    else:
-        collator = None
-        train_ds = tokenize_dataset(splits["train"], tokenizer, config)
-        val_ds   = tokenize_dataset(splits["test"], tokenizer, config)
+    train_ds, collator = prepare_task_dataset(splits["train"], tokenizer, config)
+    val_ds, _ = prepare_task_dataset(splits["test"], tokenizer, config)
 
 
     loader_kwargs = dict(
@@ -158,6 +245,18 @@ def main(config):
     train_loader = DataLoader(train_ds, shuffle=True, collate_fn=collator, **loader_kwargs)
     val_loader   = DataLoader(val_ds, shuffle=False, collate_fn=collator, **loader_kwargs)
 
+    # Separate alignment-preservation loader for projector refresh
+    align_full_ds = build_alignment_dataset(config, logger)
+    align_ds = prepare_alignment_dataset(align_full_ds, tokenizer, config)
+
+    align_loader = DataLoader(
+        align_ds,
+        shuffle=True,
+        collate_fn=None,
+        **loader_kwargs,
+    )
+    align_batch_iter = _cycle_loader(align_loader)
+   
     # optimizer + scheduler
     optimizer = get_adapter_optimizer(
         model, config["lr"], config.get("weight_decay", 0.01)
@@ -190,14 +289,35 @@ def main(config):
                 optimizer.zero_grad()
 
 
+            if (
+                use_alignguard
+                and global_step > 0
+                and global_step % refresh_every == 0
+            ):
+                logger.info(
+                    f"Recomputing AlignGuard projector at step {global_step} "
+                    f"from {refresh_batches} alignment minibatches"
+                )
+                alignment_fisher = recompute_alignment_projector(
+                    model=model,
+                    align_batch_iter=align_batch_iter,
+                    num_batches=refresh_batches,
+                    block_size=block_size,
+                    rank_per_block=rank_per_block,
+                    eta0=oja_eta0,
+                    orth_every=oja_orth_every,
+                    init_samples=oja_init_samples,
+                )
+
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
+                labels = batch["labels"] if "labels" in batch else batch["input_ids"]
+
                 outputs = model(
                     input_ids=batch["input_ids"],
                     attention_mask=batch["attention_mask"],
-                    labels=batch["labels"],
+                    labels=labels,
                 )
                 loss = outputs.loss / grad_accum
-
                 # ---- AlignGuard-LoRA objective (adapter-space, ΔW-based) ----
                 if use_alignguard:
                     ag_term = alignguard_loss(
@@ -212,15 +332,6 @@ def main(config):
                     loss = loss + (ag_term / grad_accum)
 
             loss.backward()
-
-            # ---- Optional: update task curvature EMA proxy ----
-            if use_alignguard and task_curvature is not None:
-                update_task_curvature(
-                    model,
-                    task_curvature,
-                    beta=float(ag_cfg.get("task_curv_beta", 0.95)),
-                )
-
 
             if (global_step + 1) % grad_accum == 0:
                 optimizer.step()

@@ -15,8 +15,8 @@ from ethical_adapter.core.utils import print_param_summary
 from ethical_adapter.training.early_stop_manager import EarlyStopManager
 from ethical_adapter.training.load_adapters import load_adapters_from_checkpoint
 from ethical_adapter.training.data import (
-    build_phase_dataset,
-    tokenize_dataset,
+    build_gate_dataset,
+    tokenize_text_dataset,
 )
 from ethical_adapter.core.adapter import ParallelLinear
 from ethical_adapter.training.optim_utils import (
@@ -26,13 +26,12 @@ from ethical_adapter.training.optim_utils import (
 )
 
 
-def gate_loss(gate_logits, toxicity):
-    # safe -> 0, toxic -> 1
-    target = 1 - toxicity.to(gate_logits.device, gate_logits.dtype).unsqueeze(1)
+def gate_loss(gate_logits, labels):
+    target = labels.to(gate_logits.device, gate_logits.dtype).unsqueeze(1)
     return F.binary_cross_entropy_with_logits(gate_logits, target)
 
 
-# eval step for gate toxicity
+
 @torch.no_grad()
 def eval_step(model, loader):
     model.eval()
@@ -45,7 +44,7 @@ def eval_step(model, loader):
 
         gate_logits = model.gate_store["logits"]
 
-        loss = gate_loss(gate_logits, batch["toxicity"])
+        loss = gate_loss(gate_logits, batch["label"])
 
         total_loss += loss.item()
 
@@ -79,9 +78,10 @@ def main(config):
 
     base_model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
-    )
+        dtype=torch.bfloat16,
+    ).to("cuda")
+    base_model.gradient_checkpointing_enable()
+    base_model.config.use_cache = False
 
     # inject adapters and gate controller.
     adapter_cfg = AdapterConfig(
@@ -119,11 +119,11 @@ def main(config):
     # --------------------------------------------------------
     # Load datasets for gate_toxicity phase
     # --------------------------------------------------------
-    full_ds = build_phase_dataset(config, logger, phase="gate_toxicity")
+    full_ds = build_gate_dataset(config, logger)
     splits = full_ds.train_test_split(test_size=0.1, seed=42)
 
-    train_ds = tokenize_dataset(splits["train"], tokenizer, config)
-    val_ds = tokenize_dataset(splits["test"], tokenizer, config)
+    train_ds = tokenize_text_dataset(splits["train"], tokenizer, config)
+    val_ds = tokenize_text_dataset(splits["test"], tokenizer, config)
 
     loader_kwargs = dict(
         batch_size=config["batch_size"],
@@ -155,6 +155,8 @@ def main(config):
     global_step = 0
     use_amp = True
 
+
+    torch.cuda.empty_cache()
     for epoch in range(config["epochs"]):
         logger.info(f"Epoch {epoch + 1}/{config['epochs']} starting")
         pbar = tqdm(train_loader, desc=f"Epoch {epoch + 1}")
@@ -173,7 +175,7 @@ def main(config):
 
                 gate_logits = model.gate_store["logits"]
 
-                loss = gate_loss(gate_logits, batch["toxicity"]) / grad_accum
+                loss = gate_loss(gate_logits, batch["label"]) / grad_accum
 
             loss.backward()
 
@@ -193,17 +195,19 @@ def main(config):
         )
         print_param_summary(model)
 
+        # Save best model
+        if val_loss < best_val:
+            best_val = val_loss
+            save_checkpoint(model, tokenizer, run_dir, "best", logger, best=True)
+
+
         # Early stopping
         if early_stop.should_stop(val_loss, epoch + 1):
             logger.info("Early stopping triggered (%s).", early_stop.reason)
             save_checkpoint(model, tokenizer, run_dir, "early_stop", logger)
             break
 
-        # Save best model
-        if val_loss < best_val:
-            best_val = val_loss
-            save_checkpoint(model, tokenizer, run_dir, "best", logger, best=True)
-
+        
         # Periodic save
         if (epoch + 1) % config["save_every"] == 0:
             save_checkpoint(model, tokenizer, run_dir, epoch + 1, logger)

@@ -10,35 +10,59 @@ def iter_parallel_linear(model):
 
 
 def compute_delta_w(pl: ParallelLinear) -> torch.Tensor:
-    """
-    ΔW = scaling * (B @ A)
-    A.weight: (r, in)
-    B.weight: (out, r)
-    returns: (out, in)
-    """
-    A = pl.adapter.A.weight
-    B = pl.adapter.B.weight
-    return pl.adapter.scaling * (B @ A)
+    return pl.adapter.delta_weight()
+
+
+def set_capture_delta_grad(model, enabled: bool):
+    for _, pl in iter_parallel_linear(model):
+        pl.capture_delta_grad = enabled
+        if not enabled:
+            pl._last_delta_w = None
+
+
+def get_last_delta_grad(pl: ParallelLinear) -> torch.Tensor | None:
+    dW = getattr(pl, "_last_delta_w", None)
+    if dW is None:
+        return None
+    return dW.grad
+
 
 def project_delta_w(dW: torch.Tensor, proj_entry: dict):
     """
-    Coordinate projector using stored top-m indices.
+    Blockwise projector:
+      vec(ΔW)_A = concat_b U_b (U_b^T vec(ΔW)_b)
+      vec(ΔW)_T = vec(ΔW) - vec(ΔW)_A
     """
-
-    idx = proj_entry["idx"].to(dW.device)
-
     flat = dW.flatten()
+    if proj_entry.get("type") != "block_subspace":
+        raise ValueError(f"Expected block_subspace projector, got {proj_entry.get('type')}")
 
     flat_A = torch.zeros_like(flat)
-    flat_A[idx] = flat[idx]
+
+    for (s, e), blk in zip(proj_entry["ranges"], proj_entry["blocks"]):
+        U = blk["U"].to(device=dW.device, dtype=dW.dtype)          # (block_dim, r)
+        x = flat[s:e]
+        flat_A[s:e] = U @ (U.T @ x)
 
     flat_T = flat - flat_A
+    return flat_A.view_as(dW), flat_T.view_as(dW)
 
-    dW_A = flat_A.view_as(dW)
-    dW_T = flat_T.view_as(dW)
 
-    return dW_A, dW_T
+def fisher_quadratic_from_block_subspace(dW: torch.Tensor, proj_entry: dict) -> torch.Tensor:
+    """
+    Approximate vec(dW)^T F vec(dW) with blockwise low-rank Fisher:
+      sum_b x_b^T U_b diag(evals_b) U_b^T x_b
+    """
+    flat = dW.flatten()
+    out = torch.zeros((), device=dW.device, dtype=dW.dtype)
 
+    for (s, e), blk in zip(proj_entry["ranges"], proj_entry["blocks"]):
+        U = blk["U"].to(device=dW.device, dtype=dW.dtype)
+        evals = blk["evals"].to(device=dW.device, dtype=dW.dtype)
+        coeff = U.T @ flat[s:e]
+        out = out + torch.sum(evals * coeff.pow(2))
+
+    return out
 
 
 def alignguard_loss(
@@ -50,12 +74,6 @@ def alignguard_loss(
     lambda_riem: float,
     lambda_geo: float,
 ) -> torch.Tensor:
-    """
-    Computes AlignGuard-style loss terms over ParallelLinear modules.
-    fisher_dict: key -> tensor (out, in)  (alignment Fisher diag mask/weights)
-    task_curv_dict: key -> tensor (out, in) (EMA proxy; optional)
-    Keys are f"{module_name}.adapter"
-    """
     device = next(model.parameters()).device
     dtype = next(model.parameters()).dtype
 
@@ -64,53 +82,37 @@ def alignguard_loss(
     loss_riem = torch.zeros((), device=device, dtype=dtype)
     loss_geo = torch.zeros((), device=device, dtype=dtype)
 
+    beta = 5.0
+    tau = 0.01
+    eps = 1e-8
+
     for name, pl in iter_parallel_linear(model):
         key = f"{name}.adapter"
         if key not in fisher_dict:
             continue
 
-        dW = compute_delta_w(pl)  # (out, in)
-        proj_entry = fisher_dict[key]  # <-- fisher entry is a dict now
+        dW = compute_delta_w(pl)
+        proj_entry = fisher_dict[key]
 
-        # projection into alignment/task subspaces
         dW_A, dW_T = project_delta_w(dW, proj_entry)
 
-        # diagonal Fisher weights (optional)
-        Fdiag = proj_entry.get("Fdiag", None)
-        if Fdiag is not None:
-            Fdiag = Fdiag.to(device=dW.device, dtype=dW.dtype)
-        else:
-            Fdiag = torch.ones_like(dW)
+        loss_align = loss_align + fisher_quadratic_from_block_subspace(dW_A, proj_entry)
 
-
-        # (1) Alignment preservation: Fisher-weighted norm on alignment component
-        loss_align = loss_align + torch.sum(Fdiag * (dW_A ** 2))
-
-
-        # (2) Task stability: optional curvature-weighted norm on task component
-        if task_curv_dict is not None and (key in task_curv_dict) and (lambda_task > 0):
-            Hdiag = task_curv_dict[key].to(device=dW.device, dtype=dW.dtype)
-            loss_task = loss_task + torch.sum(Hdiag * dW_T * dW_T)
-
-        # (3) Riemannian collision: coordinate overlap
-        # smooth overlap weighting η
-        beta = 10.0
-        tau = 0.01
+        if lambda_task > 0:
+            if task_curv_dict is not None and key in task_curv_dict:
+                Hdiag = task_curv_dict[key].to(device=dW.device, dtype=dW.dtype)
+            else:
+                Hdiag = torch.ones_like(dW_T)
+            loss_task = loss_task + torch.sum(Hdiag * dW_T.pow(2))
 
         mag = torch.abs(dW_A + dW_T)
         eta = 1.0 + beta * torch.sigmoid(mag - tau)
-
         loss_riem = loss_riem + torch.sum(eta * dW_A * dW_T)
 
-
-        # (4) Geodesic collision: squared cosine similarity
-        dot = torch.sum(Fdiag * dW_A * dW_T)
-
-        normA = torch.sqrt(torch.sum(Fdiag * (dW_A ** 2)) + 1e-8)
-        normT = torch.sqrt(torch.sum(Fdiag * (dW_T ** 2)) + 1e-8)
-
-        cos2 = (dot / (normA * normT + 1e-8)) ** 2
-        loss_geo = loss_geo + cos2
+        dot = torch.sum(dW_A * dW_T)
+        normA = torch.sqrt(torch.sum(dW_A.pow(2)) + eps)
+        normT = torch.sqrt(torch.sum(dW_T.pow(2)) + eps)
+        loss_geo = loss_geo + (dot / (normA * normT + eps)).pow(2)
 
     return (
         lambda_align * loss_align
@@ -121,53 +123,10 @@ def alignguard_loss(
 
 
 @torch.no_grad()
-def init_task_curvature(model) -> dict:
-    """
-    Initializes task curvature buffers (EMA proxy) per ParallelLinear as ΔW-shaped zeros on CPU.
-    """
+def init_task_curvature_identity(model) -> dict:
     curv = {}
     for name, pl in iter_parallel_linear(model):
         key = f"{name}.adapter"
         dW = compute_delta_w(pl)
-        curv[key] = torch.zeros_like(dW, device="cpu", dtype=torch.float32)
+        curv[key] = torch.ones_like(dW, device="cpu", dtype=torch.float32)
     return curv
-
-
-
-def build_alignment_mask(Fdiag: torch.Tensor, frac: float = 0.1) -> torch.Tensor:
-    """
-    Builds top-fraction Fisher mask.
-    Keeps highest Fisher entries as alignment-critical.
-    """
-    flat = Fdiag.flatten()
-    k = max(1, int(frac * flat.numel()))
-
-    topk_vals = torch.topk(flat, k, largest=True).values
-    threshold = topk_vals.min()
-
-    mask = (Fdiag >= threshold).to(Fdiag.dtype)
-    return mask
-
-@torch.no_grad()
-def update_task_curvature(model, task_curv: dict, beta: float):
-    """
-    EMA of squared gradients mapped into ΔW space.
-    """
-    for name, pl in iter_parallel_linear(model):
-        key = f"{name}.adapter"
-        if key not in task_curv:
-            continue
-
-        A = pl.adapter.A.weight
-        B = pl.adapter.B.weight
-
-        if A.grad is None or B.grad is None:
-            continue
-
-        gW = pl.adapter.scaling * (
-            B.grad @ A.detach() + B.detach() @ A.grad
-        )
-
-        gW = gW.detach().float().cpu()
-
-        task_curv[key].mul_(beta).add_((1.0 - beta) * (gW ** 2))
