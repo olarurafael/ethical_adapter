@@ -9,9 +9,9 @@ from ethical_adapter.training.data import (
     build_alignment_dataset,
     prepare_alignment_dataset,
 )
-from ethical_adapter.core.adapter import ParallelLinear
+from ethical_adapter.core.adapter import GatedAdapter
 from ethical_adapter.alignguard.alignguard_utils import (
-    iter_parallel_linear,
+    iter_gated_adapters,
     compute_delta_w,
     set_capture_delta_grad,
     get_last_delta_grad,
@@ -55,7 +55,7 @@ def main(cfg):
     model.eval()
 
     for m in model.modules():
-        if isinstance(m, ParallelLinear):
+        if isinstance(m, GatedAdapter):
             m.set_adapter_mode("on")
 
     model.to(DEVICE)
@@ -78,7 +78,7 @@ def main(cfg):
     init_samples = int(cfg.get("alignguard_oja_init_samples", rank_per_block))
 
     estimators = {}
-    for name, pl in iter_parallel_linear(model):
+    for name, pl in iter_gated_adapters(model):
         key = f"{name}.adapter"
         dW = compute_delta_w(pl)
         estimators[key] = BlockwiseOjaEstimator(
@@ -109,7 +109,7 @@ def main(cfg):
         )
         outputs.loss.backward()
 
-        for name, pl in iter_parallel_linear(model):
+        for name, pl in iter_gated_adapters(model):
             key = f"{name}.adapter"
             gW = get_last_delta_grad(pl)
             if gW is not None:

@@ -1,15 +1,15 @@
 # src/ethical_adapter/introspect.py
 import torch.nn as nn
-from .core.adapter import ParallelLinear
+from .core.adapter import GatedAdapter
 
 
 def list_adapters(model: nn.Module):
     """
-    Return a list of tuples (name, module, param_count) for all ParallelLinear adapters.
+    Return a list of tuples (name, module, param_count) for all gated adapters.
     """
     adapters = []
     for name, module in model.named_modules():
-        if isinstance(module, ParallelLinear):
+        if isinstance(module, GatedAdapter):
             count = sum(p.numel() for p in module.adapter.parameters())
             adapters.append((name, module, count))
     return adapters

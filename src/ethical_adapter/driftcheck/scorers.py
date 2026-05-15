@@ -23,7 +23,7 @@ from detoxify import Detoxify
 from safetensors.torch import load_file
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from ethical_adapter.core.adapter import ParallelLinear
+from ethical_adapter.core.adapter import GatedAdapter
 from ethical_adapter.core.config import AdapterConfig, GateConfig
 from ethical_adapter.core.inject import inject_adapters
 
@@ -175,15 +175,15 @@ class HFGenerator:
         )
         return [x.strip() for x in decoded]
 
-    def _get_parallel_modules(self) -> list[ParallelLinear]:
-        return [m for m in self.model.modules() if isinstance(m, ParallelLinear)]
+    def _get_gated_adapters(self) -> list[GatedAdapter]:
+        return [m for m in self.model.modules() if isinstance(m, GatedAdapter)]
 
     @staticmethod
-    def _detect_mode_from_module(module: ParallelLinear) -> str:
+    def _detect_mode_from_module(module: GatedAdapter) -> str:
         return module.adapter_mode
 
     def current_adapter_mode(self) -> str | None:
-        mods = self._get_parallel_modules()
+        mods = self._get_gated_adapters()
         if not mods:
             return None
         return self._detect_mode_from_module(mods[0])
@@ -207,11 +207,11 @@ class HFGenerator:
         baseline_mode: str = "off",
         max_new_tokens: int = 48,
     ) -> dict:
-        mods = self._get_parallel_modules()
+        mods = self._get_gated_adapters()
         if not mods:
             return {
                 "status": "skip",
-                "reason": "no_parallellinear_modules",
+                "reason": "no_gated_adapter_modules",
             }
         if not prompts:
             return {
@@ -257,7 +257,7 @@ def _resolve_adapter_mode(
 
 def _set_adapter_mode(model, mode: str) -> None:
     for module in model.modules():
-        if not isinstance(module, ParallelLinear):
+        if not isinstance(module, GatedAdapter):
             continue
         if mode not in {"on", "off", "gate"}:
             raise ValueError("adapter_mode must be one of: auto, on, off, gate")

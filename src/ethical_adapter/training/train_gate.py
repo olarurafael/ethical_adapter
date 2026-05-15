@@ -19,7 +19,7 @@ from ethical_adapter.training.data import (
     load_gate_dataset,
     tokenize_text_dataset,
 )
-from ethical_adapter.core.adapter import ParallelLinear
+from ethical_adapter.core.adapter import GatedAdapter
 from ethical_adapter.training.optim_utils import (
     prepare_model_for_gate_training,
     get_gate_optimizer,
@@ -104,7 +104,7 @@ def main(config):
 
     # make sure adapters are not forced to be open or closed.
     for m in model.modules():
-        if isinstance(m, ParallelLinear):
+        if isinstance(m, GatedAdapter):
             m.set_adapter_mode("gate")
 
     model.to(next(model.parameters()).device)

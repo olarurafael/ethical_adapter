@@ -54,7 +54,7 @@ class LoRAAdapter(nn.Module):
         return F.linear(x_drop, dW, bias=None)
 
 
-class ParallelLinear(nn.Module):
+class GatedAdapter(nn.Module):
     """
     Wraps a frozen nn.Linear (the base map) with a parallel LoRA adapter.
     Forward: base(x) + gate * adapter(x), where gate is one scalar per example.
@@ -76,7 +76,7 @@ class ParallelLinear(nn.Module):
     ):
         super().__init__()
         if not isinstance(base_linear, nn.Linear):
-            raise TypeError("ParallelLinear expects an nn.Linear as base_linear")
+            raise TypeError("GatedAdapter expects an nn.Linear as base_linear")
         if gate_hard_threshold is not None and not (0.0 < gate_hard_threshold < 1.0):
             raise ValueError("gate_hard_threshold must be in (0, 1)")
 

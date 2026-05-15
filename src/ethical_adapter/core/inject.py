@@ -2,9 +2,9 @@
 import torch
 import torch.nn as nn
 from types import SimpleNamespace
-from .adapter import ParallelLinear
+from .adapter import GatedAdapter
 from .config import AdapterConfig
-from .gate import GateCache, GateController, GatedSourceWrapper
+from .gate import GateCache, GateController, GatePredictor
 
 
 def get_submodule(model: nn.Module, dotted_path: str):
@@ -24,7 +24,7 @@ def get_submodule(model: nn.Module, dotted_path: str):
 
 def inject_adapters(model: nn.Module, config: AdapterConfig) -> nn.Module:
     """
-    Replace selected nn.Linear modules in 'model' with ParallelLinear adapters.
+    Replace selected nn.Linear modules in 'model' with gated adapters.
     The base weights are frozen; adapters are newly created and trainable.
     """
     gate_cache = None
@@ -51,7 +51,7 @@ def inject_adapters(model: nn.Module, config: AdapterConfig) -> nn.Module:
         model_device = next(model.parameters()).device
         model_dtype = next(model.parameters()).dtype
         gate_ctrl = gate_ctrl.to(device=model_device, dtype=model_dtype)
-        wrapped_source = GatedSourceWrapper(
+        wrapped_source = GatePredictor(
             base_module=target,
             gate_controller=gate_ctrl,
             gate_cache=gate_cache,
@@ -66,7 +66,7 @@ def inject_adapters(model: nn.Module, config: AdapterConfig) -> nn.Module:
         if not isinstance(target, nn.Linear):
             raise TypeError(f"Target module '{path}' is not an nn.Linear.")
 
-        wrapped = ParallelLinear(
+        wrapped = GatedAdapter(
             base_linear=target,
             rank=config.rank,
             alpha=config.alpha,

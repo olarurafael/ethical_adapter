@@ -17,7 +17,7 @@ class GateController(nn.Module):
     Produces one scalar gate logit per example.
 
     The controller sees hidden states from a selected source module, pools over
-    sequence positions, and predicts a logit with a linear readout. ParallelLinear
+    sequence positions, and predicts a logit with a linear readout. GatedAdapter
     converts the logit to a gate value with sigmoid, or to a hard 0/1 gate when
     configured.
     """
@@ -78,7 +78,7 @@ class GateController(nn.Module):
         return logits
 
 
-class GatedSourceWrapper(nn.Module):
+class GatePredictor(nn.Module):
     """
     Wraps a chosen module so it:
       1. runs the original computation
@@ -116,7 +116,7 @@ class GatedSourceWrapper(nn.Module):
         elif isinstance(output, tuple) and isinstance(output[0], torch.Tensor):
             hidden = output[0]
         else:
-            raise TypeError("GatedSourceWrapper expects tensor or tuple output.")
+            raise TypeError("GatePredictor expects tensor or tuple output.")
 
         logits = self.gate_controller(hidden)
         self.gate_cache.logits = logits
