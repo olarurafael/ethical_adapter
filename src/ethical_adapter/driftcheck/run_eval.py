@@ -20,10 +20,12 @@ Outputs:
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 from pathlib import Path
 
 import pandas as pd
+import torch
 from tqdm import tqdm
 
 from ethical_adapter.config_io import load_yaml_config
@@ -135,6 +137,15 @@ def main() -> None:
         help="Threshold for Detoxify toxicity channel (paper default: 0.5).",
     )
     parser.add_argument(
+        "--toxicity_batch_size", type=int, default=64,
+        help="Batch size for Detoxify scoring. This is separate from generation batch size.",
+    )
+    parser.add_argument(
+        "--toxicity_device", type=str, default="cpu",
+        choices=["cpu", "cuda"],
+        help="Device for Detoxify scoring. CPU is slower but avoids overlapping GPU memory with the LLM.",
+    )
+    parser.add_argument(
         "--limit", type=int, default=None,
         help="Cap the number of prompts evaluated (e.g. 500 for a quick PoC). "
              "Takes the first N rows from the input dataset file.",
@@ -225,6 +236,19 @@ def main() -> None:
         responses.extend(gen.generate(batch, cfg))
 
     df["response"] = responses
+    df.to_json(
+        outdir / "generations.jsonl",
+        orient="records",
+        lines=True,
+        force_ascii=False,
+    )
+
+    # Detoxify is a separate RoBERTa model. Release the causal LM before loading
+    # it so long DriftCheck runs do not stack both models in the same process.
+    del gen
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
     # ------------------------------------------------------------------
     # Refusal classification
@@ -248,8 +272,16 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Toxicity scoring
     # ------------------------------------------------------------------
-    tox_scorer = ToxicityScorer()
-    df["toxicity_score"] = tox_scorer.score(df["response"].tolist())
+    tox_scorer = ToxicityScorer(device=args.toxicity_device)
+    response_texts = df["response"].tolist()
+    toxicity_scores: list[float] = []
+    for i in tqdm(
+        range(0, len(response_texts), args.toxicity_batch_size),
+        desc="Scoring toxicity",
+    ):
+        batch = response_texts[i : i + args.toxicity_batch_size]
+        toxicity_scores.extend(tox_scorer.score(batch))
+    df["toxicity_score"] = toxicity_scores
 
     # ------------------------------------------------------------------
     # Write per-prompt predictions
@@ -286,6 +318,8 @@ def main() -> None:
         "n_safe": int(len(safe_df)),
         "n_unsafe": int(len(unsafe_df)),
         "toxicity_threshold": args.toxicity_threshold,
+        "toxicity_batch_size": args.toxicity_batch_size,
+        "toxicity_device": args.toxicity_device,
         "model": model_name,
         "adapter_checkpoint": args.adapter_checkpoint,
         "gate_checkpoint": args.gate_checkpoint,

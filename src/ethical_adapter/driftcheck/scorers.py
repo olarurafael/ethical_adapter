@@ -444,8 +444,8 @@ class ToxicityScorer:
     if the model variant does not expose it directly.
     """
 
-    def __init__(self, model_name: str = "unbiased"):
-        self.detox = Detoxify(model_name)
+    def __init__(self, model_name: str = "unbiased", device: str = "cpu"):
+        self.detox = Detoxify(model_name, device=device)
 
     def score(self, texts: List[str]) -> List[float]:
         pred = self.detox.predict(texts)
