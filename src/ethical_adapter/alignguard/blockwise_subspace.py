@@ -99,6 +99,9 @@ class OjaBlock:
             "evals": evals.cpu().contiguous(),
         }
 
+    def is_initialized(self) -> bool:
+        return self.U is not None
+
 
 class BlockwiseOjaEstimator:
     """
@@ -150,3 +153,6 @@ class BlockwiseOjaEstimator:
             "ranges": self.ranges,
             "blocks": [blk.finalize() for blk in self.blocks],
         }
+
+    def is_initialized(self) -> bool:
+        return all(blk.is_initialized() for blk in self.blocks)
