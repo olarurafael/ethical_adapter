@@ -1,10 +1,20 @@
 # src/ethical_adapter/inject.py
+from dataclasses import dataclass
+
 import torch
 import torch.nn as nn
-from types import SimpleNamespace
+
 from .adapter import GatedAdapter
 from .config import AdapterConfig
 from .gate import GateCache, GateController, GatePredictor
+
+
+@dataclass
+class InjectedAdapters:
+    model: nn.Module
+    injected_layers: list[str]
+    gate_controller: GateController | None
+    gate_cache: GateCache | None
 
 
 def get_submodule(model: nn.Module, dotted_path: str):
@@ -22,7 +32,7 @@ def get_submodule(model: nn.Module, dotted_path: str):
     return parent, attr_name, target
 
 
-def inject_adapters(model: nn.Module, config: AdapterConfig) -> nn.Module:
+def inject_adapters(model: nn.Module, config: AdapterConfig) -> InjectedAdapters:
     """
     Replace selected nn.Linear modules in 'model' with gated adapters.
     The base weights are frozen; adapters are newly created and trainable.
@@ -37,8 +47,7 @@ def inject_adapters(model: nn.Module, config: AdapterConfig) -> nn.Module:
             input_dim = model.config.hidden_size
         else:
             raise TypeError(
-                "Model does not expose `config.hidden_size`; "
-                "please specify gate input_dim manually."
+                "Model must expose `config.hidden_size` for gate injection."
             )
 
         gate_ctrl = GateController(
@@ -77,8 +86,7 @@ def inject_adapters(model: nn.Module, config: AdapterConfig) -> nn.Module:
         setattr(parent, name, wrapped)
         injected.append(path)
 
-    # Return the model and metadata (for logging/debug)
-    return SimpleNamespace(
+    return InjectedAdapters(
         model=model,
         injected_layers=injected,
         gate_controller=gate_ctrl,
