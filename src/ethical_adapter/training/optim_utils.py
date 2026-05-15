@@ -1,7 +1,7 @@
 # src/ethical_adapter/training/optim_utils.py
 from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
-from ethical_adapter.core.adapter import ParallelLinear
+from ethical_adapter.core.adapter import GatedAdapter
 
 
 def prepare_model_for_adapter_training(model):
@@ -11,7 +11,7 @@ def prepare_model_for_adapter_training(model):
 
     # unfreeze adapters
     for module in model.modules():
-        if isinstance(module, ParallelLinear):
+        if isinstance(module, GatedAdapter):
             if hasattr(module, "adapter") and module.adapter is not None:
                 for p in module.adapter.parameters():
                     p.requires_grad = True
@@ -31,7 +31,7 @@ def prepare_model_for_gate_training(model, gate_controller):
 def get_adapter_optimizer(model, lr, weight_decay=0.01, betas=(0.9, 0.999)):
     adapter_params = []
     for module in model.modules():
-        if isinstance(module, ParallelLinear):
+        if isinstance(module, GatedAdapter):
             if hasattr(module, "adapter") and module.adapter is not None:
                 for p in module.adapter.parameters():
                     if p.requires_grad:

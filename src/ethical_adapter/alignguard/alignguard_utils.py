@@ -1,26 +1,26 @@
 # src/ethical_adapter/training/alignguard_utils.py
 import torch
-from ethical_adapter.core.adapter import ParallelLinear
+from ethical_adapter.core.adapter import GatedAdapter
 
 
-def iter_parallel_linear(model):
+def iter_gated_adapters(model):
     for name, module in model.named_modules():
-        if isinstance(module, ParallelLinear):
+        if isinstance(module, GatedAdapter):
             yield name, module
 
 
-def compute_delta_w(pl: ParallelLinear) -> torch.Tensor:
+def compute_delta_w(pl: GatedAdapter) -> torch.Tensor:
     return pl.adapter.delta_weight()
 
 
 def set_capture_delta_grad(model, enabled: bool):
-    for _, pl in iter_parallel_linear(model):
+    for _, pl in iter_gated_adapters(model):
         pl.capture_delta_grad = enabled
         if not enabled:
             pl._last_delta_w = None
 
 
-def get_last_delta_grad(pl: ParallelLinear) -> torch.Tensor | None:
+def get_last_delta_grad(pl: GatedAdapter) -> torch.Tensor | None:
     dW = getattr(pl, "_last_delta_w", None)
     if dW is None:
         return None
@@ -86,7 +86,7 @@ def alignguard_loss(
     tau = 0.01
     eps = 1e-8
 
-    for name, pl in iter_parallel_linear(model):
+    for name, pl in iter_gated_adapters(model):
         key = f"{name}.adapter"
         if key not in fisher_dict:
             continue
@@ -125,7 +125,7 @@ def alignguard_loss(
 @torch.no_grad()
 def init_task_curvature_identity(model) -> dict:
     curv = {}
-    for name, pl in iter_parallel_linear(model):
+    for name, pl in iter_gated_adapters(model):
         key = f"{name}.adapter"
         dW = compute_delta_w(pl)
         curv[key] = torch.ones_like(dW, device="cpu", dtype=torch.float32)

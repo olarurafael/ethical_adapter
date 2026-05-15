@@ -14,7 +14,6 @@ def load_adapters_from_checkpoint(
     logger = logger or logging.getLogger(__name__)
 
     import json
-    from glob import glob
 
     index_path = os.path.join(checkpoint_dir, "model.safetensors.index.json")
 

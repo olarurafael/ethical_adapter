@@ -18,7 +18,7 @@ from ethical_adapter.training.data import (
     tokenize_text_dataset,
     tokenize_supervised_dataset
 )
-from ethical_adapter.core.adapter import ParallelLinear
+from ethical_adapter.core.adapter import GatedAdapter
 from ethical_adapter.training.optim_utils import (
     get_adapter_optimizer,
     prepare_model_for_adapter_training,
@@ -92,7 +92,7 @@ def main(config):
     # Freeze or unfreeze parameters
     prepare_model_for_adapter_training(model)
     for m in model.modules():
-        if isinstance(m, ParallelLinear):
+        if isinstance(m, GatedAdapter):
             m.set_adapter_mode("on")
 
     model.to(next(model.parameters()).device)

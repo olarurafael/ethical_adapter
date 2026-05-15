@@ -19,7 +19,7 @@ from ethical_adapter.training.data import (
     prepare_task_dataset,
     prepare_alignment_dataset,
 )
-from ethical_adapter.core.adapter import ParallelLinear
+from ethical_adapter.core.adapter import GatedAdapter
 from ethical_adapter.training.optim_utils import (
     get_adapter_optimizer,
     prepare_model_for_adapter_training,
@@ -28,7 +28,7 @@ from ethical_adapter.training.optim_utils import (
 from ethical_adapter.alignguard.alignguard_utils import (
     alignguard_loss,
     init_task_curvature_identity,
-    iter_parallel_linear,
+    iter_gated_adapters,
     set_capture_delta_grad,
     get_last_delta_grad,
     compute_delta_w,
@@ -103,7 +103,7 @@ def recompute_alignment_projector(
     model.eval()
 
     estimators = {}
-    for name, pl in iter_parallel_linear(model):
+    for name, pl in iter_gated_adapters(model):
         key = f"{name}.adapter"
         dW = compute_delta_w(pl)
         estimators[key] = BlockwiseOjaEstimator(
@@ -135,7 +135,7 @@ def recompute_alignment_projector(
 
         saw_valid_grad = False
 
-        for name, pl in iter_parallel_linear(model):
+        for name, pl in iter_gated_adapters(model):
             key = f"{name}.adapter"
             gW = get_last_delta_grad(pl)
             if gW is not None:
@@ -223,7 +223,7 @@ def main(config):
     # Freeze or unfreeze parameters
     prepare_model_for_adapter_training(model)
     for m in model.modules():
-        if isinstance(m, ParallelLinear):
+        if isinstance(m, GatedAdapter):
             m.set_adapter_mode("on")
 
     model.to(next(model.parameters()).device)

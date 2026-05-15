@@ -19,7 +19,7 @@ from ethical_adapter.training.data import (
     load_gate_dataset,
     tokenize_text_dataset,
 )
-from ethical_adapter.core.adapter import ParallelLinear
+from ethical_adapter.core.adapter import GatedAdapter
 from ethical_adapter.training.optim_utils import (
     prepare_model_for_gate_training,
     get_gate_optimizer,
@@ -45,7 +45,7 @@ def eval_step(model, loader):
 
         _ = model(**batch)
 
-        gate_logits = model.gate_store["logits"]
+        gate_logits = model.gate_cache.logits
 
         loss = gate_loss(gate_logits, batch["label"])
 
@@ -104,7 +104,7 @@ def main(config):
 
     # make sure adapters are not forced to be open or closed.
     for m in model.modules():
-        if isinstance(m, ParallelLinear):
+        if isinstance(m, GatedAdapter):
             m.set_adapter_mode("gate")
 
     model.to(next(model.parameters()).device)
@@ -190,7 +190,7 @@ def main(config):
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
                 _ = model(**batch)
 
-                gate_logits = model.gate_store["logits"]
+                gate_logits = model.gate_cache.logits
 
                 loss = gate_loss(gate_logits, batch["label"]) / grad_accum
 

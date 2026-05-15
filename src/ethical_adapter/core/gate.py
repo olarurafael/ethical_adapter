@@ -1,6 +1,15 @@
 # src/ethical_adapter/core/gate.py
+from dataclasses import dataclass
+
 import torch
 import torch.nn as nn
+
+
+@dataclass
+class GateCache:
+    """Per-forward cache that carries the gate logit from source to adapters."""
+
+    logits: torch.Tensor | None = None
 
 
 class GateController(nn.Module):
@@ -8,7 +17,7 @@ class GateController(nn.Module):
     Produces one scalar gate logit per example.
 
     The controller sees hidden states from a selected source module, pools over
-    sequence positions, and predicts a logit with a linear readout. ParallelLinear
+    sequence positions, and predicts a logit with a linear readout. GatedAdapter
     converts the logit to a gate value with sigmoid, or to a hard 0/1 gate when
     configured.
     """
@@ -69,7 +78,7 @@ class GateController(nn.Module):
         return logits
 
 
-class GatedSourceWrapper(nn.Module):
+class GatePredictor(nn.Module):
     """
     Wraps a chosen module so it:
       1. runs the original computation
@@ -81,14 +90,12 @@ class GatedSourceWrapper(nn.Module):
         self,
         base_module: nn.Module,
         gate_controller: GateController,
-        gate_store: dict,
-        store_key: str,
+        gate_cache: GateCache,
     ):
         super().__init__()
         self.base = base_module
         self.gate_controller = gate_controller
-        self.gate_store = gate_store
-        self.store_key = store_key
+        self.gate_cache = gate_cache
 
     def __getattr__(self, name):
         # Preserve the wrapped module's interface so transformer internals
@@ -109,11 +116,10 @@ class GatedSourceWrapper(nn.Module):
         elif isinstance(output, tuple) and isinstance(output[0], torch.Tensor):
             hidden = output[0]
         else:
-            raise TypeError("GatedSourceWrapper expects tensor or tuple output.")
-
+            raise TypeError("GatePredictor expects tensor or tuple output.")
 
         logits = self.gate_controller(hidden)
-        self.gate_store[self.store_key] = logits
+        self.gate_cache.logits = logits
 
         # Return the ORIGINAL module output (not the logits!)
         return output
