@@ -180,11 +180,7 @@ class HFGenerator:
 
     @staticmethod
     def _detect_mode_from_module(module: ParallelLinear) -> str:
-        if getattr(module, "force_gate_closed", False):
-            return "off"
-        if getattr(module, "force_gate_open", False):
-            return "on"
-        return "gate"
+        return module.adapter_mode
 
     def current_adapter_mode(self) -> str | None:
         mods = self._get_parallel_modules()
@@ -263,17 +259,9 @@ def _set_adapter_mode(model, mode: str) -> None:
     for module in model.modules():
         if not isinstance(module, ParallelLinear):
             continue
-        if mode == "on":
-            module.force_gate_open = True
-            module.force_gate_closed = False
-        elif mode == "off":
-            module.force_gate_open = False
-            module.force_gate_closed = True
-        elif mode == "gate":
-            module.force_gate_open = False
-            module.force_gate_closed = False
-        else:
+        if mode not in {"on", "off", "gate"}:
             raise ValueError("adapter_mode must be one of: auto, on, off, gate")
+        module.set_adapter_mode(mode)
 
 
 def _load_checkpoint_state(checkpoint_dir: str) -> dict:
@@ -321,7 +309,7 @@ def _load_injected_modules_from_checkpoint(
         if include_adapters and "adapter" in key:
             filtered_state[key] = value
             continue
-        if include_gate and "gate" in key:
+        if include_gate and "gate_controller" in key:
             filtered_state[key] = value
 
     if not filtered_state:
@@ -337,7 +325,14 @@ def _load_injected_modules_from_checkpoint(
     filtered_state = {
         k: v.to(device=device, dtype=dtype) for k, v in filtered_state.items()
     }
-    model.load_state_dict(filtered_state, strict=False)
+    missing, _unexpected = model.load_state_dict(filtered_state, strict=False)
+    if include_gate and any("gate_controller" in key for key in missing):
+        gate_keys = [key for key in filtered_state if "gate_controller" in key]
+        raise RuntimeError(
+            "Gate checkpoint does not match the current gate architecture. "
+            f"Loaded gate keys: {gate_keys[:8]}; missing current keys: "
+            f"{[key for key in missing if 'gate_controller' in key][:8]}"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -4,8 +4,6 @@ import time
 import os
 from pathlib import Path
 
-HIDDEN_SIZES = [512, 256, 1024] #512 is the size for only 1 fc, not fc1 or fc2.
-ACTIVATIONS = ["relu"] # only relu works
 POOLINGS = ["logsumexp"]  # max pooling NEVER works
 TEMPERATURES = [1, 0.7] # 0.7 helps output much more confident numbers than 1.
 EPOCHS = [8] # early stop stops longer intervention
@@ -34,8 +32,6 @@ def latest_best(run_root):
     return candidates[-1]
 
 for (
-    hidden_size,
-    activation,
     pooling,
     temperature,
     epochs,
@@ -43,8 +39,6 @@ for (
     grad_accum,
     lr,
 ) in itertools.product(
-    HIDDEN_SIZES,
-    ACTIVATIONS,
     POOLINGS,
     TEMPERATURES,
     EPOCHS,
@@ -55,8 +49,6 @@ for (
 
 
     tag = (
-        f"hs{hidden_size}_"
-        f"{activation}_"
         f"{pooling}_"
         f"t{temperature}_"
         f"e{epochs}_"
@@ -76,8 +68,6 @@ for (
     write_config(
         BASE_TRAIN,
         train_cfg,
-        HIDDEN_SIZE=hidden_size,
-        ACTIVATION=activation,
         POOLING=pooling,
         TEMPERATURE=temperature,
         EPOCHS=epochs,
@@ -112,8 +102,6 @@ for (
     write_config(
         BASE_EVAL,
         eval_cfg,
-        HIDDEN_SIZE=hidden_size,
-        ACTIVATION=activation,
         POOLING=pooling,
         TEMPERATURE=temperature,
         RUNS_DIR=best_dir,
@@ -140,4 +128,3 @@ for (
             stderr=subprocess.STDOUT,
             check=True,
         )
-

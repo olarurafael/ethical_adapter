@@ -56,8 +56,7 @@ def main(cfg):
 
     for m in model.modules():
         if isinstance(m, ParallelLinear):
-            m.force_gate_open = True
-            m.force_gate_closed = False
+            m.set_adapter_mode("on")
 
     model.to(DEVICE)
 
