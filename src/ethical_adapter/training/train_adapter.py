@@ -8,14 +8,14 @@ from ethical_adapter.core.config import AdapterConfig, GateConfig
 from ethical_adapter.core.inject import inject_adapters
 from ethical_adapter.core.run_utils import (
     setup_run,
-    save_checkpoint,
+    save_training_checkpoint,
 )
 from ethical_adapter.core.utils import print_param_summary
 from ethical_adapter.training.early_stop_manager import EarlyStopManager
 from ethical_adapter.training.load_adapters import load_adapters_from_checkpoint
 from ethical_adapter.training.data import (
-    build_phase_dataset,
-    tokenize_dataset,
+    build_task_dataset,
+    tokenize_text_dataset,
     tokenize_supervised_dataset
 )
 from ethical_adapter.core.adapter import ParallelLinear
@@ -108,7 +108,7 @@ def main(config):
         logger.info("No adapter checkpoint specified; training from scratch.")
 
     # load datasets for this phase
-    full_ds = build_phase_dataset(config, logger, phase="adapters")
+    full_ds = build_task_dataset(config, logger)
 
     print("DATASET COLUMNS:", full_ds.column_names)
     splits = full_ds.train_test_split(test_size=0.1, seed=42)
@@ -121,8 +121,8 @@ def main(config):
         val_ds = tokenize_supervised_dataset(splits["test"], tokenizer, config)
     else:
         collator = None
-        train_ds = tokenize_dataset(splits["train"], tokenizer, config)
-        val_ds = tokenize_dataset(splits["test"], tokenizer, config)
+        train_ds = tokenize_text_dataset(splits["train"], tokenizer, config)
+        val_ds = tokenize_text_dataset(splits["test"], tokenizer, config)
 
     sample = train_ds[0]
 
@@ -165,6 +165,7 @@ def main(config):
     grad_accum = int(config.get("gradient_accumulation_steps", 1))
 
     best_val = float("inf")
+    save_adapter_only = bool(config.get("save_adapter_only", False))
 
     # training loop
     global_step = 0
@@ -191,6 +192,16 @@ def main(config):
                 )
 
                 loss = outputs.loss / grad_accum
+
+            if not torch.isfinite(loss):
+                logger.warning(
+                    "Skipping non-finite training loss at global_step=%s (epoch=%s).",
+                    global_step,
+                    epoch + 1,
+                )
+                optimizer.zero_grad(set_to_none=True)
+                continue
+
             loss.backward()
 
             if (global_step + 1) % grad_accum == 0:
@@ -211,17 +222,39 @@ def main(config):
 
         # Save checkpoints
         if (epoch + 1) % config["save_every"] == 0:
-            save_checkpoint(model, tokenizer, run_dir, epoch + 1, logger)
+            save_training_checkpoint(
+                model,
+                tokenizer,
+                run_dir,
+                epoch + 1,
+                logger,
+                adapter_only=save_adapter_only,
+            )
 
         if val_loss < best_val:
             best_val = val_loss
-            save_checkpoint(model, tokenizer, run_dir, "best", logger, best=True)
+            save_training_checkpoint(
+                model,
+                tokenizer,
+                run_dir,
+                "best",
+                logger,
+                best=True,
+                adapter_only=save_adapter_only,
+            )
 
         # early stopping
         if early_stop.should_stop(val_loss, epoch + 1):
             reason = early_stop.reason
             logger.info("Early stopping triggered (%s).", reason)
-            save_checkpoint(model, tokenizer, run_dir, "early_stop", logger)
+            save_training_checkpoint(
+                model,
+                tokenizer,
+                run_dir,
+                "early_stop",
+                logger,
+                adapter_only=save_adapter_only,
+            )
             break
 
     logger.info(f"Training complete. Best validation loss: {best_val:.4f}")
