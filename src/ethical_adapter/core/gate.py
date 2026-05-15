@@ -1,63 +1,42 @@
 # src/ethical_adapter/core/gate.py
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-
-
-ACTIVATIONS = {
-    "relu": F.relu,
-    "gelu": F.gelu,
-    "silu": F.silu,
-    "none": lambda x: x,
-}
 
 
 class GateController(nn.Module):
     """
-    Produces a fixed number of scalar gates (e.g., one per adapter) in [0,1].
-    Feed it a pooled hidden representation and it returns shape (batch, num_gates).
+    Produces one scalar gate logit per example.
+
+    The controller sees hidden states from a selected source module, pools over
+    sequence positions, and predicts a logit with a linear readout. ParallelLinear
+    converts the logit to a gate value with sigmoid, or to a hard 0/1 gate when
+    configured.
     """
 
     def __init__(
         self,
         input_dim: int,
-        hidden_dim: int = 256,
-        num_gates: int = 1,
-        activation: str = "silu",
         temperature: float = 1.0,
+        dropout: float = 0.0,
         pooling: str = "mean",  # how to collapse (batch, seq, dim) -> (batch, dim)
     ):
         super().__init__()
-        if activation not in ACTIVATIONS:
-            raise ValueError(
-                f"Unsupported activation '{activation}'. "
-                f"Choose from {list(ACTIVATIONS.keys())}."
-            )
-        if hidden_dim <= 0:
-            raise ValueError("hidden_dim must be > 0")
-        if num_gates <= 0:
-            raise ValueError("num_gates must be > 0")
-        if pooling not in {"mean", "cls", "max", 'none', "logsumexp"}:
-            raise ValueError("pooling must be 'mean' or 'cls'")
+        if not (0.0 <= dropout < 1.0):
+            raise ValueError("dropout must be in [0, 1)")
+        if pooling not in {"mean", "cls", "max", "logsumexp"}:
+            raise ValueError("pooling must be one of: mean, cls, max, logsumexp")
         if temperature <= 0:
             raise ValueError("temperature must be > 0")
 
-        # self.fc1 = nn.Linear(input_dim, hidden_dim, bias=False)
-        # self.fc2 = nn.Linear(hidden_dim, num_gates, bias=False)
-        self.fc = nn.Linear(input_dim,num_gates,bias=True)
-        self.act_name = activation
+        self.norm = nn.LayerNorm(input_dim)
+        self.fc = nn.Linear(input_dim, 1)
+        self.dropout = nn.Dropout(dropout)
         self.temperature = temperature
         self.pooling = pooling
-        self.last_gates = None
-        # self.norm = nn.LayerNorm(input_dim)
-        self.norm = nn.LayerNorm(input_dim)
-        # self.dropout = nn.Dropout(0.1)
+        self.last_gate_logits = None
 
-        #nn.init.xavier_uniform_(self.fc1.weight)
-        # nn.init.zeros_(self.fc1.bias)
-        # nn.init.xavier_uniform_(self.fc2.weight)
-        nn.init.zeros_(self.fc.bias)
         nn.init.zeros_(self.fc.weight)
+        nn.init.zeros_(self.fc.bias)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """
@@ -65,9 +44,11 @@ class GateController(nn.Module):
             hidden_states: (batch, seq_len, input_dim)
 
         Returns:
-            gates: (batch, num_gates) in (0,1)
+            gate logits: (batch,)
         """
-        if self.pooling == "mean":
+        if hidden_states.dim() == 2:
+            pooled = hidden_states
+        elif self.pooling == "mean":
             pooled = hidden_states.mean(dim=1)
         elif self.pooling == "max":
             pooled = hidden_states.max(dim=1).values
@@ -76,21 +57,12 @@ class GateController(nn.Module):
         elif self.pooling == "logsumexp":
             # soft-max pooling, more sensitive than mean, less brittle than max
             pooled = torch.logsumexp(hidden_states * 5.0, dim=1) / 5.0
-
-        elif self.pooling == "topk":
-            k = min(4, hidden_states.size(1))
-            pooled = hidden_states.topk(k, dim=1).values.mean(dim=1)
-        else:  # "none"
-            pooled = hidden_states  # (batch, seq, dim)
+        else:
+            raise RuntimeError(f"Unsupported pooling mode: {self.pooling}")
 
         pooled = self.norm(pooled)
-
-        # h = self.fc1(pooled)
-        # h = ACTIVATIONS[self.act_name](h)
-        # # h = self.dropout(h)
-
-        # logits = self.fc2(h) / self.temperature
-        logits = self.fc(pooled) / self.temperature
+        pooled = self.dropout(pooled)
+        logits = self.fc(pooled).squeeze(-1) / self.temperature
 
         self.last_gate_logits = logits
 
@@ -101,7 +73,7 @@ class GatedSourceWrapper(nn.Module):
     """
     Wraps a chosen module so it:
       1. runs the original computation
-      2. computes N scalar gates via GateController
+      2. computes one scalar gate logit via GateController
       3. stores those gates for downstream adapters
     """
 
@@ -140,11 +112,8 @@ class GatedSourceWrapper(nn.Module):
             raise TypeError("GatedSourceWrapper expects tensor or tuple output.")
 
 
-        # Compute gate logits
         logits = self.gate_controller(hidden)
-
-        # Store them for downstream adapters
-        self.gate_store["logits"] = logits
+        self.gate_store[self.store_key] = logits
 
         # Return the ORIGINAL module output (not the logits!)
         return output

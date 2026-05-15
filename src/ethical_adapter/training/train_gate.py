@@ -28,7 +28,9 @@ from ethical_adapter.training.optim_utils import (
 
 
 def gate_loss(gate_logits, labels):
-    target = labels.to(gate_logits.device, gate_logits.dtype).unsqueeze(1)
+    if gate_logits.dim() == 2 and gate_logits.size(-1) == 1:
+        gate_logits = gate_logits.squeeze(-1)
+    target = labels.to(gate_logits.device, gate_logits.dtype)
     return F.binary_cross_entropy_with_logits(gate_logits, target)
 
 
@@ -103,8 +105,7 @@ def main(config):
     # make sure adapters are not forced to be open or closed.
     for m in model.modules():
         if isinstance(m, ParallelLinear):
-            m.force_gate_open = False
-            m.force_gate_closed = False
+            m.set_adapter_mode("gate")
 
     model.to(next(model.parameters()).device)
 

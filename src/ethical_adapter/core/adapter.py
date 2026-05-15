@@ -2,7 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional
+from typing import Literal, Optional
 
 
 class LoRAAdapter(nn.Module):
@@ -51,14 +51,17 @@ class LoRAAdapter(nn.Module):
         dW = self.delta_weight()
         return F.linear(x_drop, dW, bias=None)
 
+
 class ParallelLinear(nn.Module):
     """
     Wraps a frozen nn.Linear (the base map) with a parallel LoRA adapter.
-    Forward: base(x) + gate * adapter(x), where gate is scalar (default 1).
-    """
+    Forward: base(x) + gate * adapter(x), where gate is one scalar per example.
 
-    debug_counter = 0
-    DEBUG_EVERY = 1500
+    adapter_mode controls the adapter path explicitly:
+      - "on":   adapter is fully applied (gate = 1.0)
+      - "off":  adapter is disabled (gate = 0.0)
+      - "gate": adapter is controlled by gate_store["logits"]
+    """
 
     def __init__(
         self,
@@ -66,16 +69,16 @@ class ParallelLinear(nn.Module):
         rank: int,
         alpha: float,
         dropout: float = 0.0,
-        gate_index: int = None,
         gate_store: Optional[dict] = None,
+        gate_hard_threshold: Optional[float] = None,
     ):
         super().__init__()
         if not isinstance(base_linear, nn.Linear):
             raise TypeError("ParallelLinear expects an nn.Linear as base_linear")
+        if gate_hard_threshold is not None and not (0.0 < gate_hard_threshold < 1.0):
+            raise ValueError("gate_hard_threshold must be in (0, 1)")
 
-        # Copy the base linear so parameters/shape persist
         self.base = base_linear
-        # Freeze base weights (we're steering, not fine-tuning)
         for p in self.base.parameters():
             p.requires_grad = False
 
@@ -90,13 +93,12 @@ class ParallelLinear(nn.Module):
         self.adapter.A.weight.data = self.adapter.A.weight.data.to(adapter_dtype)
         self.adapter.B.weight.data = self.adapter.B.weight.data.to(adapter_dtype)
 
-        self.gate_index = gate_index
         self.gate_store = gate_store
+        self.gate_hard_threshold = gate_hard_threshold
+        self.adapter_mode: Literal["on", "off", "gate"] = (
+            "gate" if gate_store is not None else "on"
+        )
 
-        self.force_gate_open = False
-        self.force_gate_closed = False
-
-        # AlignGuard hooks
         self.capture_delta_grad = False
         self._last_delta_w = None
 
@@ -108,35 +110,51 @@ class ParallelLinear(nn.Module):
     def out_features(self):
         return self.base.out_features
 
-    def _resolve_gate(self, x: torch.Tensor) -> torch.Tensor:
+    def set_adapter_mode(self, mode: Literal["on", "off", "gate"]) -> None:
+        if mode not in {"on", "off", "gate"}:
+            raise ValueError("adapter mode must be one of: on, off, gate")
+        if mode == "gate" and self.gate_store is None:
+            raise ValueError("adapter mode 'gate' requires a gate_store")
+        self.adapter_mode = mode
+
+    def _resolve_gate_values(
+        self, x: torch.Tensor
+    ) -> tuple[torch.Tensor, Optional[torch.Tensor]]:
         batch_size = x.size(0)
 
-        if self.force_gate_open:
-            return torch.ones(batch_size, device=x.device, dtype=x.dtype)
-        if self.force_gate_closed:
-            return torch.zeros(batch_size, device=x.device, dtype=x.dtype)
+        if self.adapter_mode == "on":
+            return torch.ones(batch_size, device=x.device, dtype=x.dtype), None
+        if self.adapter_mode == "off":
+            return torch.zeros(batch_size, device=x.device, dtype=x.dtype), None
 
-        # Get gate logits from gate_store
         if self.gate_store is None:
-            return torch.ones(batch_size, device=x.device, dtype=x.dtype)
+            raise RuntimeError("adapter mode 'gate' requires a gate_store")
 
         logits = self.gate_store.get("logits", None)
         if logits is None:
-            return torch.ones(batch_size, device=x.device, dtype=x.dtype)
-        
+            raise RuntimeError("adapter mode 'gate' requires gate_store['logits']")
 
-        assert self.gate_index is not None, "gate_index not set!"
-        assert self.gate_index < logits.size(1), f"gate_index {self.gate_index} >= num_gates {logits.size(1)}"
+        if logits.dim() == 2 and logits.size(-1) == 1:
+            logits = logits.squeeze(-1)
+        if logits.dim() != 1:
+            raise ValueError(
+                "gate_store['logits'] must have shape (batch,) or (batch, 1); "
+                f"got {tuple(logits.shape)}"
+            )
+        if logits.size(0) != batch_size:
+            raise ValueError(
+                "gate logits batch size does not match adapter input batch size: "
+                f"{logits.size(0)} != {batch_size}"
+            )
 
-        # Select this adapter’s gate index
-        gate_logits = logits[:, self.gate_index]  # shape (B,)
-        return gate_logits.to(x.device, x.dtype)
+        gate_logits = logits.to(device=x.device, dtype=x.dtype)
+        gate_values = torch.sigmoid(gate_logits)
+        if self.gate_hard_threshold is not None:
+            gate_values = (gate_values >= self.gate_hard_threshold).to(dtype=x.dtype)
+        return gate_values, gate_logits
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # resolve gate logits for this layer
-
-        gate_logits = self._resolve_gate(x)  # shape (batch,)
-        gate_values = torch.sigmoid(gate_logits)
+        gate_values, gate_logits = self._resolve_gate_values(x)
 
         # Expand to (batch, 1, 1, ...) to match adapter_out dims
         gate_values_expanded = gate_values.view(-1, *([1] * (x.dim() - 1)))
@@ -145,7 +163,7 @@ class ParallelLinear(nn.Module):
         # Compute the exact ΔW used in forward and optionally retain its grad
         x_drop = self.adapter.dropout(x)
         delta_w = self.adapter.delta_weight()
-        
+
         if self.capture_delta_grad and delta_w.requires_grad:
             self._last_delta_w = delta_w
             self._last_delta_w.retain_grad()
@@ -155,45 +173,9 @@ class ParallelLinear(nn.Module):
         adapter_raw = F.linear(x_drop, delta_w, bias=None)
         adapter_out = gate_values_expanded * adapter_raw
 
-        self.last_gate_logits = gate_logits.detach().float()
+        self.last_gate_logits = (
+            None if gate_logits is None else gate_logits.detach().float()
+        )
         self.last_gate_values = gate_values.detach().float()
-
-        # debug print
-        ParallelLinear.debug_counter += 1
-        if ParallelLinear.debug_counter % ParallelLinear.DEBUG_EVERY == 0:
-            with torch.no_grad():
-                print("\n[ParallelLinear DEBUG] step:", ParallelLinear.debug_counter)
-                print(
-                    "  base_out:     std={:.4f}  mean={:.4f}  max={:.4f}".format(
-                        base_out.std().item(),
-                        base_out.mean().item(),
-                        base_out.abs().max().item(),
-                    )
-                )
-                print(
-                    "  adapter_raw:  std={:.4f}  mean={:.4f}  max={:.4f}".format(
-                        adapter_raw.std().item(),
-                        adapter_raw.mean().item(),
-                        adapter_raw.abs().max().item(),
-                    )
-                )
-                print(
-                    "  adapter_out:  std={:.4f}  (raw * gate)".format(
-                        adapter_out.std().item()
-                    )
-                )
-                print(
-                    "  gate:         mean={:.4f}  min={:.4f}  max={:.4f}".format(
-                        gate_values.mean().item(),
-                        gate_values.min().item(),
-                        gate_values.max().item(),
-                    )
-                )
-                print(
-                    "  ratio (adapter/base std): {:.4f}".format(
-                        adapter_raw.std().item() / (base_out.std().item() + 1e-8)
-                    )
-                )
-                print("-----------------------------------------")
 
         return base_out + adapter_out

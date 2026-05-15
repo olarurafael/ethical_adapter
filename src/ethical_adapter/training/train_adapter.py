@@ -93,8 +93,7 @@ def main(config):
     prepare_model_for_adapter_training(model)
     for m in model.modules():
         if isinstance(m, ParallelLinear):
-            m.force_gate_open = True
-            m.force_gate_closed = False
+            m.set_adapter_mode("on")
 
     model.to(next(model.parameters()).device)
 

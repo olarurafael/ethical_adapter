@@ -1,30 +1,28 @@
 # src/ethical_adapter/config.py
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
 class GateConfig:
     enabled: bool = False
     source_module: str = ""
-    hidden_size: int = 256
-    activation: str = "gelu"
-    num_gates: int = 1
     temperature: float = 1.0
     dropout: float = 0.0
     pooling: str = "mean"  # how to reduce (batch, seq, dim) -> (batch, dim)
+    hard_threshold: Optional[float] = None
 
     def __post_init__(self):
         if self.enabled and not self.source_module:
             raise ValueError("source_module must be set when gate.enabled=True")
-        if self.hidden_size <= 0:
-            raise ValueError("hidden_size must be > 0")
-        if self.num_gates <= 0:
-            raise ValueError("num_gates must be > 0")
-        if self.activation not in {"relu", "gelu", "silu", "none"}:
-            raise ValueError("activation must be one of: relu, gelu, silu")
+        if not (0.0 <= self.dropout < 1.0):
+            raise ValueError("dropout must be in [0, 1)")
+        if self.temperature <= 0:
+            raise ValueError("temperature must be > 0")
         if self.pooling not in {"mean", "cls", "max", "logsumexp"}:
-            raise ValueError("pooling must be 'mean' or 'cls'")
+            raise ValueError("pooling must be one of: mean, cls, max, logsumexp")
+        if self.hard_threshold is not None and not (0.0 < self.hard_threshold < 1.0):
+            raise ValueError("hard_threshold must be in (0, 1)")
 
 
 @dataclass
