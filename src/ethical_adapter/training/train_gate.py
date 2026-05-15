@@ -45,7 +45,7 @@ def eval_step(model, loader):
 
         _ = model(**batch)
 
-        gate_logits = model.gate_store["logits"]
+        gate_logits = model.gate_cache.logits
 
         loss = gate_loss(gate_logits, batch["label"])
 
@@ -190,7 +190,7 @@ def main(config):
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
                 _ = model(**batch)
 
-                gate_logits = model.gate_store["logits"]
+                gate_logits = model.gate_cache.logits
 
                 loss = gate_loss(gate_logits, batch["label"]) / grad_accum
 

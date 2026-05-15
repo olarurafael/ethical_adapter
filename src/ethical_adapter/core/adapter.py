@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Literal, Optional
 
+from .gate import GateCache
+
 
 class LoRAAdapter(nn.Module):
     """
@@ -60,7 +62,7 @@ class ParallelLinear(nn.Module):
     adapter_mode controls the adapter path explicitly:
       - "on":   adapter is fully applied (gate = 1.0)
       - "off":  adapter is disabled (gate = 0.0)
-      - "gate": adapter is controlled by gate_store["logits"]
+      - "gate": adapter is controlled by gate_cache.logits
     """
 
     def __init__(
@@ -69,7 +71,7 @@ class ParallelLinear(nn.Module):
         rank: int,
         alpha: float,
         dropout: float = 0.0,
-        gate_store: Optional[dict] = None,
+        gate_cache: Optional[GateCache] = None,
         gate_hard_threshold: Optional[float] = None,
     ):
         super().__init__()
@@ -93,10 +95,10 @@ class ParallelLinear(nn.Module):
         self.adapter.A.weight.data = self.adapter.A.weight.data.to(adapter_dtype)
         self.adapter.B.weight.data = self.adapter.B.weight.data.to(adapter_dtype)
 
-        self.gate_store = gate_store
+        self.gate_cache = gate_cache
         self.gate_hard_threshold = gate_hard_threshold
         self.adapter_mode: Literal["on", "off", "gate"] = (
-            "gate" if gate_store is not None else "on"
+            "gate" if gate_cache is not None else "on"
         )
 
         self.capture_delta_grad = False
@@ -113,8 +115,8 @@ class ParallelLinear(nn.Module):
     def set_adapter_mode(self, mode: Literal["on", "off", "gate"]) -> None:
         if mode not in {"on", "off", "gate"}:
             raise ValueError("adapter mode must be one of: on, off, gate")
-        if mode == "gate" and self.gate_store is None:
-            raise ValueError("adapter mode 'gate' requires a gate_store")
+        if mode == "gate" and self.gate_cache is None:
+            raise ValueError("adapter mode 'gate' requires a gate cache")
         self.adapter_mode = mode
 
     def _resolve_gate_values(
@@ -127,18 +129,18 @@ class ParallelLinear(nn.Module):
         if self.adapter_mode == "off":
             return torch.zeros(batch_size, device=x.device, dtype=x.dtype), None
 
-        if self.gate_store is None:
-            raise RuntimeError("adapter mode 'gate' requires a gate_store")
+        if self.gate_cache is None:
+            raise RuntimeError("adapter mode 'gate' requires a gate cache")
 
-        logits = self.gate_store.get("logits", None)
+        logits = self.gate_cache.logits
         if logits is None:
-            raise RuntimeError("adapter mode 'gate' requires gate_store['logits']")
+            raise RuntimeError("adapter mode 'gate' requires gate_cache.logits")
 
         if logits.dim() == 2 and logits.size(-1) == 1:
             logits = logits.squeeze(-1)
         if logits.dim() != 1:
             raise ValueError(
-                "gate_store['logits'] must have shape (batch,) or (batch, 1); "
+                "gate_cache.logits must have shape (batch,) or (batch, 1); "
                 f"got {tuple(logits.shape)}"
             )
         if logits.size(0) != batch_size:

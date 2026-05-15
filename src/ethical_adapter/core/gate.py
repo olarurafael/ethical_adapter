@@ -1,6 +1,15 @@
 # src/ethical_adapter/core/gate.py
+from dataclasses import dataclass
+
 import torch
 import torch.nn as nn
+
+
+@dataclass
+class GateCache:
+    """Per-forward cache that carries the gate logit from source to adapters."""
+
+    logits: torch.Tensor | None = None
 
 
 class GateController(nn.Module):
@@ -81,14 +90,12 @@ class GatedSourceWrapper(nn.Module):
         self,
         base_module: nn.Module,
         gate_controller: GateController,
-        gate_store: dict,
-        store_key: str,
+        gate_cache: GateCache,
     ):
         super().__init__()
         self.base = base_module
         self.gate_controller = gate_controller
-        self.gate_store = gate_store
-        self.store_key = store_key
+        self.gate_cache = gate_cache
 
     def __getattr__(self, name):
         # Preserve the wrapped module's interface so transformer internals
@@ -111,9 +118,8 @@ class GatedSourceWrapper(nn.Module):
         else:
             raise TypeError("GatedSourceWrapper expects tensor or tuple output.")
 
-
         logits = self.gate_controller(hidden)
-        self.gate_store[self.store_key] = logits
+        self.gate_cache.logits = logits
 
         # Return the ORIGINAL module output (not the logits!)
         return output

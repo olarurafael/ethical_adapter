@@ -4,7 +4,7 @@ import torch.nn as nn
 from types import SimpleNamespace
 from .adapter import ParallelLinear
 from .config import AdapterConfig
-from .gate import GateController, GatedSourceWrapper
+from .gate import GateCache, GateController, GatedSourceWrapper
 
 
 def get_submodule(model: nn.Module, dotted_path: str):
@@ -27,10 +27,11 @@ def inject_adapters(model: nn.Module, config: AdapterConfig) -> nn.Module:
     Replace selected nn.Linear modules in 'model' with ParallelLinear adapters.
     The base weights are frozen; adapters are newly created and trainable.
     """
-    gate_store = {}
+    gate_cache = None
     gate_ctrl = None
 
     if config.gate.enabled:
+        gate_cache = GateCache()
         parent, name, target = get_submodule(model, config.gate.source_module)
         if hasattr(model, "config") and hasattr(model.config, "hidden_size"):
             input_dim = model.config.hidden_size
@@ -53,11 +54,10 @@ def inject_adapters(model: nn.Module, config: AdapterConfig) -> nn.Module:
         wrapped_source = GatedSourceWrapper(
             base_module=target,
             gate_controller=gate_ctrl,
-            gate_store=gate_store,
-            store_key="logits",
+            gate_cache=gate_cache,
         )
         setattr(parent, name, wrapped_source)
-        model.gate_store = gate_store
+        model.gate_cache = gate_cache
 
     injected = []
     for path in config.target_modules:
@@ -71,7 +71,7 @@ def inject_adapters(model: nn.Module, config: AdapterConfig) -> nn.Module:
             rank=config.rank,
             alpha=config.alpha,
             dropout=config.dropout,
-            gate_store=gate_store if gate_ctrl else None,
+            gate_cache=gate_cache,
             gate_hard_threshold=config.gate.hard_threshold if gate_ctrl else None,
         )
         setattr(parent, name, wrapped)
@@ -82,5 +82,5 @@ def inject_adapters(model: nn.Module, config: AdapterConfig) -> nn.Module:
         model=model,
         injected_layers=injected,
         gate_controller=gate_ctrl,
-        gate_store=gate_store,
+        gate_cache=gate_cache,
     )
