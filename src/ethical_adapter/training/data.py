@@ -455,6 +455,8 @@
 
 # # That makes the call sites much clearer and removes the weird legacy branch logic.
 
+import hashlib
+import json
 import logging
 import os
 import random
@@ -555,6 +557,59 @@ def _apply_max_samples(ds: Dataset, config: Dict[str, Any]) -> Dataset:
     return ds
 
 
+def _get_dataset_seed(config: Dict[str, Any]) -> int:
+    return int(config.get("dataset_seed", 42))
+
+
+def _write_dataset_jsonl(ds: Dataset, path: str) -> str:
+    out_path = Path(path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with out_path.open("w", encoding="utf-8") as f:
+        for row in ds:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    digest = hashlib.sha256(out_path.read_bytes()).hexdigest()
+    return digest
+
+
+def _maybe_load_frozen_task_dataset(config: Dict[str, Any], logger) -> Dataset | None:
+    frozen_path = config.get("frozen_task_dataset_path")
+    if not frozen_path:
+        return None
+
+    frozen = Path(frozen_path)
+    if not frozen.exists():
+        return None
+
+    logger.info("Loading frozen task dataset from %s", frozen)
+    ds = smart_load_dataset(str(frozen), split="train")
+
+    required = {"prompt", "answer"}
+    if not required.issubset(ds.column_names):
+        raise ValueError(
+            f"Frozen task dataset {frozen} must contain columns {sorted(required)}; "
+            f"got {ds.column_names}"
+        )
+
+    logger.info("Loaded %d frozen task rows.", len(ds))
+    return ds
+
+
+def _maybe_export_task_dataset(ds: Dataset, config: Dict[str, Any], logger) -> None:
+    export_path = config.get("frozen_task_dataset_path") or config.get("export_task_dataset_path")
+    if not export_path:
+        return
+
+    digest = _write_dataset_jsonl(ds, export_path)
+    logger.info(
+        "Exported task dataset to %s (%d rows, sha256=%s)",
+        export_path,
+        len(ds),
+        digest,
+    )
+
+
 def _load_text_datasets(config: Dict[str, Any], subset_cfg: List[Dict[str, Any]]) -> Dataset:
     merged = None
 
@@ -573,7 +628,7 @@ def _load_text_datasets(config: Dict[str, Any], subset_cfg: List[Dict[str, Any]]
 
         merged = ds if merged is None else concatenate_datasets([merged, ds])
 
-    merged = merged.shuffle(seed=42)
+    merged = merged.shuffle(seed=_get_dataset_seed(config))
     merged = _apply_max_samples(merged, config)
     return merged
 
@@ -608,7 +663,8 @@ def load_supervised_task_dataset(config, datasets_cfg):
             prompt, answer = formatter(ex)
             rows.append({"prompt": prompt, "answer": answer})
 
-    random.shuffle(rows)
+    rng = random.Random(_get_dataset_seed(config))
+    rng.shuffle(rows)
 
     if config.get("max_train_samples"):
         rows = rows[: config["max_train_samples"]]
@@ -621,14 +677,22 @@ def build_task_dataset(config, logger):
     if not task_cfg:
         raise ValueError("No task datasets configured under datasets.task")
 
+    frozen = _maybe_load_frozen_task_dataset(config, logger)
+    if frozen is not None:
+        return frozen
+
     logger.info("Building task dataset")
 
     # supervised classification / reasoning tasks
     if any("task_type" in d for d in task_cfg):
-        return load_supervised_task_dataset(config, task_cfg)
+        ds = load_supervised_task_dataset(config, task_cfg)
+        _maybe_export_task_dataset(ds, config, logger)
+        return ds
 
     # fallback: plain text LM-style task dataset
-    return _load_text_datasets(config, task_cfg)
+    ds = _load_text_datasets(config, task_cfg)
+    _maybe_export_task_dataset(ds, config, logger)
+    return ds
 
 
 # -------------------------

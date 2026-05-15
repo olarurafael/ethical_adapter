@@ -8,7 +8,7 @@ from ethical_adapter.core.config import AdapterConfig, GateConfig
 from ethical_adapter.core.inject import inject_adapters
 from ethical_adapter.core.run_utils import (
     setup_run,
-    save_checkpoint,
+    save_training_checkpoint,
 )
 from ethical_adapter.core.utils import print_param_summary
 from ethical_adapter.training.early_stop_manager import EarlyStopManager
@@ -93,6 +93,8 @@ def recompute_alignment_projector(
     eta0: float,
     orth_every: int,
     init_samples: int,
+    previous_projector: dict | None = None,
+    logger=None,
 ):
     """
     Recompute blockwise Fisher projector from fresh alignment minibatches.
@@ -117,19 +119,33 @@ def recompute_alignment_projector(
 
     set_capture_delta_grad(model, True)
 
+    valid_batches = 0
+
     for _ in range(num_batches):
         batch = next(align_batch_iter)
         batch = {k: v.to(model.device) for k, v in batch.items()}
 
         model.zero_grad(set_to_none=True)
         outputs = model(**batch, labels=batch["input_ids"])
+        if not torch.isfinite(outputs.loss):
+            if logger is not None:
+                logger.warning("Skipping projector refresh minibatch with non-finite loss.")
+            continue
         outputs.loss.backward()
+
+        saw_valid_grad = False
 
         for name, pl in iter_parallel_linear(model):
             key = f"{name}.adapter"
             gW = get_last_delta_grad(pl)
             if gW is not None:
-                estimators[key].update(gW.detach().float().cpu().flatten())
+                flat_grad = gW.detach().float().cpu().flatten()
+                if torch.isfinite(flat_grad).all():
+                    estimators[key].update(flat_grad)
+                    saw_valid_grad = True
+
+        if saw_valid_grad:
+            valid_batches += 1
 
     set_capture_delta_grad(model, False)
     model.zero_grad(set_to_none=True)
@@ -137,6 +153,29 @@ def recompute_alignment_projector(
     if was_training:
         model.train()
 
+    uninitialized = [k for k, est in estimators.items() if not est.is_initialized()]
+    if uninitialized:
+        if logger is not None:
+            logger.warning(
+                "AlignGuard projector refresh skipped: %s/%s valid minibatches, %s uninitialized estimators. "
+                "Keeping previous projector.",
+                valid_batches,
+                num_batches,
+                len(uninitialized),
+            )
+        if previous_projector is not None:
+            return previous_projector
+        raise RuntimeError(
+            "Projector refresh failed with no usable fallback; "
+            f"valid_batches={valid_batches}, uninitialized_estimators={len(uninitialized)}"
+        )
+
+    if logger is not None:
+        logger.info(
+            "AlignGuard projector refresh succeeded with %s/%s valid minibatches.",
+            valid_batches,
+            num_batches,
+        )
     return {k: est.finalize() for k, est in estimators.items()}
 
 # adapter training main function
@@ -270,6 +309,7 @@ def main(config):
     grad_accum = int(config.get("gradient_accumulation_steps", 1))
 
     best_val = float("inf")
+    save_adapter_only = bool(config.get("save_adapter_only", False))
 
     # training loop
     global_step = 0
@@ -307,6 +347,8 @@ def main(config):
                     eta0=oja_eta0,
                     orth_every=oja_orth_every,
                     init_samples=oja_init_samples,
+                    previous_projector=alignment_fisher,
+                    logger=logger,
                 )
 
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
@@ -331,6 +373,15 @@ def main(config):
                     )
                     loss = loss + (ag_term / grad_accum)
 
+            if not torch.isfinite(loss):
+                logger.warning(
+                    "Skipping non-finite training loss at global_step=%s (epoch=%s).",
+                    global_step,
+                    epoch + 1,
+                )
+                optimizer.zero_grad(set_to_none=True)
+                continue
+
             loss.backward()
 
             if (global_step + 1) % grad_accum == 0:
@@ -351,17 +402,39 @@ def main(config):
 
         # Save checkpoints
         if (epoch + 1) % config["save_every"] == 0:
-            save_checkpoint(model, tokenizer, run_dir, epoch + 1, logger)
+            save_training_checkpoint(
+                model,
+                tokenizer,
+                run_dir,
+                epoch + 1,
+                logger,
+                adapter_only=save_adapter_only,
+            )
 
         if val_loss < best_val:
             best_val = val_loss
-            save_checkpoint(model, tokenizer, run_dir, "best", logger, best=True)
+            save_training_checkpoint(
+                model,
+                tokenizer,
+                run_dir,
+                "best",
+                logger,
+                best=True,
+                adapter_only=save_adapter_only,
+            )
 
         # early stopping
         if early_stop.should_stop(val_loss, epoch + 1):
             reason = early_stop.reason
             logger.info("Early stopping triggered (%s).", reason)
-            save_checkpoint(model, tokenizer, run_dir, "early_stop", logger)
+            save_training_checkpoint(
+                model,
+                tokenizer,
+                run_dir,
+                "early_stop",
+                logger,
+                adapter_only=save_adapter_only,
+            )
             break
 
     logger.info(f"Training complete. Best validation loss: {best_val:.4f}")

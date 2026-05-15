@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Tuple
 from pathlib import Path
 
+from safetensors.torch import save_file
+
 
 def log_trainable_params(logger: logging.Logger, model) -> Tuple[int, int]:
     """
@@ -45,8 +47,17 @@ def setup_run(config):
     return run_dir, logger
 
 
+def _adapter_gate_state_dict(model):
+    """Return only the small trainable steering state, not base-model weights."""
+    keep = {}
+    for name, tensor in model.state_dict().items():
+        if ".adapter." in name or ".gate_controller." in name:
+            keep[name] = tensor.detach().cpu().contiguous()
+    return keep
+
+
 def save_checkpoint(model, tokenizer, run_dir, epoch, logger, best=False):
-    """Save model and tokenizer checkpoints for the given epoch."""
+    """Save model checkpoints for the given epoch."""
     name = f"epoch_{epoch}" if not best else "best"
     ckpt_dir = os.path.join(run_dir, name)
     os.makedirs(ckpt_dir, exist_ok=True)
@@ -54,6 +65,48 @@ def save_checkpoint(model, tokenizer, run_dir, epoch, logger, best=False):
     model.save_pretrained(ckpt_dir, safe_serialization=True)
     tokenizer.save_pretrained(ckpt_dir)
     logger.info("Saved checkpoint to %s", ckpt_dir)
+
+
+def save_adapter_checkpoint(model, tokenizer, run_dir, epoch, logger, best=False):
+    """Save only adapter/gate weights for the given epoch."""
+    name = f"epoch_{epoch}" if not best else "best"
+    ckpt_dir = os.path.join(run_dir, name)
+    os.makedirs(ckpt_dir, exist_ok=True)
+
+    steering_state = _adapter_gate_state_dict(model)
+    if not steering_state:
+        raise RuntimeError("No adapter or gate weights found to save.")
+
+    save_file(steering_state, os.path.join(ckpt_dir, "model.safetensors"))
+    tokenizer.save_pretrained(ckpt_dir)
+
+    manifest = {
+        "checkpoint_type": "adapter_gate_only",
+        "num_tensors": len(steering_state),
+        "tensor_names": sorted(steering_state),
+    }
+    with open(os.path.join(ckpt_dir, "checkpoint_manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2)
+
+    logger.info(
+        "Saved adapter/gate checkpoint to %s (%s tensors)",
+        ckpt_dir,
+        len(steering_state),
+    )
+
+
+def save_training_checkpoint(
+    model,
+    tokenizer,
+    run_dir,
+    epoch,
+    logger,
+    best=False,
+    adapter_only=False,
+):
+    if adapter_only:
+        return save_adapter_checkpoint(model, tokenizer, run_dir, epoch, logger, best=best)
+    return save_checkpoint(model, tokenizer, run_dir, epoch, logger, best=best)
 
 
 def get_latest_best_checkpoint(runs_dir="./runs"):

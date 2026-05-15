@@ -2,12 +2,29 @@ from typing import Dict, Tuple
 
 # Canonical labels — keep these stable for evaluation
 LABELS = {
+    "boolq": {0: "no", 1: "yes"},
     "sst2": {0: "negative", 1: "positive"},
     "qqp": {0: "no", 1: "yes"},
+    "qnli": {0: "yes", 1: "no"},
+    "mrpc": {0: "no", 1: "yes"},
     "mnli": {0: "entailment", 1: "neutral", 2: "contradiction"},
     "wic": {0: "no", 1: "yes"},
     "multirc": {0: "no", 1: "yes"},
 }
+
+
+def format_boolq(ex: Dict) -> Tuple[str, str]:
+    passage = ex["passage"]
+    question = ex["question"]
+    y = LABELS["boolq"][int(ex["label"])]
+
+    prompt = (
+        "Read the passage and answer the question with yes or no.\n\n"
+        f"Passage: {passage}\n"
+        f"Question: {question}\n\n"
+        "Answer:"
+    )
+    return prompt, y
 
 
 def format_sst2(ex: Dict) -> Tuple[str, str]:
@@ -30,6 +47,34 @@ def format_qqp(ex: Dict) -> Tuple[str, str]:
         "Are the following two questions duplicates? Answer yes or no.\n\n"
         f"Question 1: {q1}\n"
         f"Question 2: {q2}\n\n"
+        "Answer:"
+    )
+    return prompt, y
+
+
+def format_qnli(ex: Dict) -> Tuple[str, str]:
+    question = ex["question"]
+    sentence = ex["sentence"]
+    y = LABELS["qnli"][int(ex["label"])]
+
+    prompt = (
+        "Does the sentence answer the question? Answer yes or no.\n\n"
+        f"Question: {question}\n"
+        f"Sentence: {sentence}\n\n"
+        "Answer:"
+    )
+    return prompt, y
+
+
+def format_mrpc(ex: Dict) -> Tuple[str, str]:
+    s1 = ex["sentence1"]
+    s2 = ex["sentence2"]
+    y = LABELS["mrpc"][int(ex["label"])]
+
+    prompt = (
+        "Do the following two sentences have the same meaning? Answer yes or no.\n\n"
+        f"Sentence 1: {s1}\n"
+        f"Sentence 2: {s2}\n\n"
         "Answer:"
     )
     return prompt, y
@@ -86,8 +131,11 @@ def format_multirc(ex: Dict) -> Tuple[str, str]:
 
 
 FORMATTERS = {
+    "boolq": format_boolq,
     "sst2": format_sst2,
     "qqp": format_qqp,
+    "qnli": format_qnli,
+    "mrpc": format_mrpc,
     "mnli": format_mnli,
     "wic": format_wic,
     "multirc": format_multirc,

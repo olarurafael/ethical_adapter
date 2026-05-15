@@ -22,6 +22,7 @@ run_phase2/
 kl_loss_gate_exp/
 run_phase1_good_boolq_adapters/
 *.log
+*.memmap
 terminal_history.txt
 probe_results_layer*.txt
 # HuggingFace tokenizer files
@@ -41,3 +42,5 @@ analysis/
 .vscode/settings.json
 *.json
 *.jsonl
+results/
+*.out

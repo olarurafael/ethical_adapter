@@ -9,13 +9,14 @@ from ethical_adapter.core.config import AdapterConfig, GateConfig
 from ethical_adapter.core.inject import inject_adapters
 from ethical_adapter.core.run_utils import (
     setup_run,
-    save_checkpoint,
+    save_training_checkpoint,
 )
 from ethical_adapter.core.utils import print_param_summary
 from ethical_adapter.training.early_stop_manager import EarlyStopManager
 from ethical_adapter.training.load_adapters import load_adapters_from_checkpoint
 from ethical_adapter.training.data import (
     build_gate_dataset,
+    load_gate_dataset,
     tokenize_text_dataset,
 )
 from ethical_adapter.core.adapter import ParallelLinear
@@ -120,10 +121,24 @@ def main(config):
     # Load datasets for gate_toxicity phase
     # --------------------------------------------------------
     full_ds = build_gate_dataset(config, logger)
-    splits = full_ds.train_test_split(test_size=0.1, seed=42)
+    gate_val_cfg = config.get("datasets", {}).get("gate_validation", [])
+    if gate_val_cfg:
+        logger.info("Using explicit gate validation dataset.")
+        train_raw = full_ds
+        val_raw = load_gate_dataset(config, gate_val_cfg)
+    else:
+        logger.info("No explicit gate validation dataset; using internal 90/10 split.")
+        splits = full_ds.train_test_split(
+            test_size=float(config.get("validation_split", 0.1)),
+            seed=int(config.get("dataset_seed", 42)),
+        )
+        train_raw = splits["train"]
+        val_raw = splits["test"]
 
-    train_ds = tokenize_text_dataset(splits["train"], tokenizer, config)
-    val_ds = tokenize_text_dataset(splits["test"], tokenizer, config)
+    logger.info("Gate train rows: %d | validation rows: %d", len(train_raw), len(val_raw))
+
+    train_ds = tokenize_text_dataset(train_raw, tokenizer, config)
+    val_ds = tokenize_text_dataset(val_raw, tokenizer, config)
 
     loader_kwargs = dict(
         batch_size=config["batch_size"],
@@ -148,6 +163,7 @@ def main(config):
     grad_accum = int(config.get("gradient_accumulation_steps", 1))
 
     best_val = float("inf")
+    save_adapter_only = bool(config.get("save_adapter_only", False))
 
     # --------------------------------------------------------
     # TRAINING LOOP
@@ -198,19 +214,41 @@ def main(config):
         # Save best model
         if val_loss < best_val:
             best_val = val_loss
-            save_checkpoint(model, tokenizer, run_dir, "best", logger, best=True)
+            save_training_checkpoint(
+                model,
+                tokenizer,
+                run_dir,
+                "best",
+                logger,
+                best=True,
+                adapter_only=save_adapter_only,
+            )
 
 
         # Early stopping
         if early_stop.should_stop(val_loss, epoch + 1):
             logger.info("Early stopping triggered (%s).", early_stop.reason)
-            save_checkpoint(model, tokenizer, run_dir, "early_stop", logger)
+            save_training_checkpoint(
+                model,
+                tokenizer,
+                run_dir,
+                "early_stop",
+                logger,
+                adapter_only=save_adapter_only,
+            )
             break
 
         
         # Periodic save
         if (epoch + 1) % config["save_every"] == 0:
-            save_checkpoint(model, tokenizer, run_dir, epoch + 1, logger)
+            save_training_checkpoint(
+                model,
+                tokenizer,
+                run_dir,
+                epoch + 1,
+                logger,
+                adapter_only=save_adapter_only,
+            )
 
     logger.info(f"Gate training complete. Best validation loss: {best_val:.4f}")
 

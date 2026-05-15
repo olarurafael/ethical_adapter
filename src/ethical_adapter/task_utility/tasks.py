@@ -50,6 +50,26 @@ def format_qqp(ex: dict) -> tuple[str, str]:
     return prompt, ("yes" if int(ex["label"]) == 1 else "no")
 
 
+def format_qnli(ex: dict) -> tuple[str, str]:
+    prompt = (
+        "Does the sentence answer the question? Answer yes or no.\n\n"
+        f"Question: {ex['question']}\n"
+        f"Sentence: {ex['sentence']}\n\n"
+        "Answer:"
+    )
+    return prompt, ("yes" if int(ex["label"]) == 0 else "no")
+
+
+def format_mrpc(ex: dict) -> tuple[str, str]:
+    prompt = (
+        "Do the following two sentences have the same meaning? Answer yes or no.\n\n"
+        f"Sentence 1: {ex['sentence1']}\n"
+        f"Sentence 2: {ex['sentence2']}\n\n"
+        "Answer:"
+    )
+    return prompt, ("yes" if int(ex["label"]) == 1 else "no")
+
+
 def format_mnli(ex: dict) -> tuple[str, str]:
     label_map = {
         0: "entailment",
@@ -114,6 +134,22 @@ TASK_SPECS: dict[str, TaskSpec] = {
         split="validation",
         choices=("no", "yes"),
         formatter=format_qqp,
+    ),
+    "qnli": TaskSpec(
+        task="qnli",
+        dataset_name="glue",
+        config_name="qnli",
+        split="validation",
+        choices=("no", "yes"),
+        formatter=format_qnli,
+    ),
+    "mrpc": TaskSpec(
+        task="mrpc",
+        dataset_name="glue",
+        config_name="mrpc",
+        split="validation",
+        choices=("no", "yes"),
+        formatter=format_mrpc,
     ),
     "mnli": TaskSpec(
         task="mnli",
@@ -183,4 +219,3 @@ def load_task_dataframe(
         )
 
     return pd.DataFrame(rows)
-

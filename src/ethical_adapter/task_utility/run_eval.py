@@ -155,7 +155,7 @@ def main() -> None:
         "--task",
         type=str,
         required=True,
-        choices=["boolq", "mnli", "multirc", "qqp", "sst2", "wic"],
+        choices=["boolq", "mnli", "mrpc", "multirc", "qnli", "qqp", "sst2", "wic"],
     )
     parser.add_argument(
         "--model_name", type=str, default=None,
@@ -336,4 +336,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
