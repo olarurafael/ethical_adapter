@@ -35,6 +35,15 @@ from ethical_adapter.alignguard.alignguard_utils import (
 from ethical_adapter.alignguard.blockwise_subspace import BlockwiseOjaEstimator
 
 
+def _seed_training(config, logger) -> int:
+    seed = int(config.get("training_seed", config.get("seed", 42)))
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    logger.info("Training seed set to %d", seed)
+    return seed
+
+
 @torch.no_grad()
 def eval_step(model, loader):
     model.eval()
@@ -162,6 +171,9 @@ def recompute_alignment_projector(
 
 def main(config):
     run_dir, logger = setup_run(config)
+    training_seed = _seed_training(config, logger)
+    dataset_seed = int(config.get("dataset_seed", 42))
+    alignment_seed = int(config.get("alignment_seed", training_seed + 1))
 
     es_cfg = config.get("early_stop", {})
     early_stop = EarlyStopManager(
@@ -241,7 +253,7 @@ def main(config):
         logger.info("AlignGuard disabled (no alignment_fisher_path set).")
 
     full_task_ds = build_task_dataset(config, logger)
-    splits = full_task_ds.train_test_split(test_size=0.1, seed=42)
+    splits = full_task_ds.train_test_split(test_size=0.1, seed=dataset_seed)
 
     train_ds, collator = prepare_task_dataset(splits["train"], tokenizer, config)
     val_ds, _ = prepare_task_dataset(splits["test"], tokenizer, config)
@@ -255,6 +267,7 @@ def main(config):
         train_ds,
         shuffle=True,
         collate_fn=collator,
+        generator=torch.Generator().manual_seed(training_seed),
         **loader_kwargs,
     )
     val_loader = DataLoader(
@@ -271,6 +284,7 @@ def main(config):
         align_ds,
         shuffle=True,
         collate_fn=None,
+        generator=torch.Generator().manual_seed(alignment_seed),
         **loader_kwargs,
     )
     align_batch_iter = _cycle_loader(align_loader)

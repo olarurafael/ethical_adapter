@@ -26,6 +26,15 @@ from ethical_adapter.training.optim_utils import (
 from ethical_adapter.training.data import SupervisedCollator
 
 
+def _seed_training(config, logger) -> int:
+    seed = int(config.get("training_seed", config.get("seed", 42)))
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    logger.info("Training seed set to %d", seed)
+    return seed
+
+
 @torch.no_grad()
 def eval_step(model, loader):
     model.eval()
@@ -47,6 +56,8 @@ def eval_step(model, loader):
 
 def main(config):
     run_dir, logger = setup_run(config)
+    training_seed = _seed_training(config, logger)
+    dataset_seed = int(config.get("dataset_seed", 42))
 
     es_cfg = config.get("early_stop", {})
     early_stop = EarlyStopManager(
@@ -98,7 +109,7 @@ def main(config):
 
     full_ds = build_task_dataset(config, logger)
 
-    splits = full_ds.train_test_split(test_size=0.1, seed=42)
+    splits = full_ds.train_test_split(test_size=0.1, seed=dataset_seed)
 
     if "prompt" in full_ds.column_names:
         collator = SupervisedCollator(tokenizer)
@@ -117,6 +128,7 @@ def main(config):
         train_ds,
         shuffle=True,
         collate_fn=collator,
+        generator=torch.Generator().manual_seed(training_seed),
         **loader_kwargs,
     )
     val_loader = DataLoader(

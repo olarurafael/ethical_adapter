@@ -26,7 +26,10 @@ OUT_PATH = "alignment_fisher.pt"
 
 
 def main(cfg):
-    torch.manual_seed(0)
+    seed = int(cfg.get("fisher_seed", cfg.get("alignment_seed", 0)))
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
     tokenizer_name = cfg.get("tokenizer_name", cfg.get("local_path"))
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
@@ -63,9 +66,14 @@ def main(cfg):
     align_ds = build_alignment_dataset(cfg, logger=logger)
     align_ds = prepare_alignment_dataset(align_ds, tokenizer, cfg)
 
+    batch_size = int(cfg.get("alignment_fisher_batch_size", BATCH_SIZE))
+    max_batches = cfg.get("alignment_fisher_max_batches", MAX_BATCHES)
+    if max_batches is not None:
+        max_batches = int(max_batches)
+
     loader = DataLoader(
         align_ds,
-        batch_size=BATCH_SIZE,
+        batch_size=batch_size,
         shuffle=False,
         num_workers=0,
     )
@@ -95,7 +103,7 @@ def main(cfg):
 
     step = 0
     for batch in loader:
-        if MAX_BATCHES is not None and step >= MAX_BATCHES:
+        if max_batches is not None and step >= max_batches:
             break
 
         batch = {k: v.to(DEVICE) for k, v in batch.items()}
