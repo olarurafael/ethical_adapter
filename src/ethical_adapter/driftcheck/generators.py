@@ -12,6 +12,7 @@ Paper specification (§2):
   Unsafe pool is stratified across categories before final sampling so that
   no single category dominates the evaluation.
 """
+
 from __future__ import annotations
 
 import random
@@ -53,35 +54,112 @@ UNSAFE_CATEGORIES = (
 # Each entry is (category_name, keyword_set).
 # Keywords are matched case-insensitively against the lowercased prompt text.
 _CATEGORY_KEYWORDS: List[tuple[str, tuple[str, ...]]] = [
-    ("violence", (
-        "kill", "bomb", "weapon", "injure", "explode", "sabotage",
-        "harm someone", "murder", "assassin", "attack", "shoot",
-        "stab", "torture", "massacre", "genocide",
-    )),
-    ("hate_speech", (
-        "slur", "racist", "racism", "sexist", "homophob", "transphob",
-        "immigrant", "minority", "religion", "nationality", "disabilities",
-        "nigger", "faggot", "chink", "spic", "kike", "retard",
-        "white supremac", "neo-nazi", "hate group",
-    )),
-    ("illegal_activity", (
-        "hack", "phishing", "counterfeit", "launder", "black market",
-        "steal", "fraud", "drug deal", "smuggl", "traffick",
-        "identity theft", "credit card dump", "darknet",
-    )),
-    ("explicit", (
-        "porn", "erotic", "sexual", "minors", "explicit content",
-        "non-consensual", "nsfw", "nude", "naked", "rape",
-    )),
-    ("privacy", (
-        "private", "home address", "phone number", "ssn", "social security",
-        "password", "doxx", "personal information", "credit card number",
-        "bank account",
-    )),
-    ("disinformation", (
-        "fake news", "disinformation", "mislead voters", "propaganda",
-        "conspiracy", "election fraud", "deep fake", "false narrative",
-    )),
+    (
+        "violence",
+        (
+            "kill",
+            "bomb",
+            "weapon",
+            "injure",
+            "explode",
+            "sabotage",
+            "harm someone",
+            "murder",
+            "assassin",
+            "attack",
+            "shoot",
+            "stab",
+            "torture",
+            "massacre",
+            "genocide",
+        ),
+    ),
+    (
+        "hate_speech",
+        (
+            "slur",
+            "racist",
+            "racism",
+            "sexist",
+            "homophob",
+            "transphob",
+            "immigrant",
+            "minority",
+            "religion",
+            "nationality",
+            "disabilities",
+            "nigger",
+            "faggot",
+            "chink",
+            "spic",
+            "kike",
+            "retard",
+            "white supremac",
+            "neo-nazi",
+            "hate group",
+        ),
+    ),
+    (
+        "illegal_activity",
+        (
+            "hack",
+            "phishing",
+            "counterfeit",
+            "launder",
+            "black market",
+            "steal",
+            "fraud",
+            "drug deal",
+            "smuggl",
+            "traffick",
+            "identity theft",
+            "credit card dump",
+            "darknet",
+        ),
+    ),
+    (
+        "explicit",
+        (
+            "porn",
+            "erotic",
+            "sexual",
+            "minors",
+            "explicit content",
+            "non-consensual",
+            "nsfw",
+            "nude",
+            "naked",
+            "rape",
+        ),
+    ),
+    (
+        "privacy",
+        (
+            "private",
+            "home address",
+            "phone number",
+            "ssn",
+            "social security",
+            "password",
+            "doxx",
+            "personal information",
+            "credit card number",
+            "bank account",
+        ),
+    ),
+    (
+        "disinformation",
+        (
+            "fake news",
+            "disinformation",
+            "mislead voters",
+            "propaganda",
+            "conspiracy",
+            "election fraud",
+            "deep fake",
+            "false narrative",
+        ),
+    ),
 ]
 
 
@@ -101,6 +179,7 @@ def categorize_unsafe_text(text: str) -> str:
 # Safe extractor — MMLU
 # ---------------------------------------------------------------------------
 
+
 def extract_safe_from_mmlu() -> List[dict]:
     """
     Extract safe one-liner prompts from MMLU.
@@ -113,19 +192,22 @@ def extract_safe_from_mmlu() -> List[dict]:
             q = make_one_line(ex.get("question", ""))
             if not looks_like_question_or_instruction(q):
                 continue
-            records.append({
-                "prompt": q,
-                "label": "safe",
-                "source": "mmlu",
-                "source_split": split,
-                "category": ex.get("subject", "general"),
-            })
+            records.append(
+                {
+                    "prompt": q,
+                    "label": "safe",
+                    "source": "mmlu",
+                    "source_split": split,
+                    "category": ex.get("subject", "general"),
+                }
+            )
     return dedupe_records(records)
 
 
 # ---------------------------------------------------------------------------
 # Unsafe extractors
 # ---------------------------------------------------------------------------
+
 
 def _pick_user_turns_from_dialogue(text: str) -> List[str]:
     """
@@ -159,13 +241,15 @@ def extract_unsafe_from_hh_rlhf(max_records: int = 20_000) -> List[dict]:
                     cat = categorize_unsafe_text(cand)
                     if cat == "other_unsafe":
                         continue
-                    records.append({
-                        "prompt": cand,
-                        "label": "unsafe",
-                        "source": "hh_rlhf",
-                        "source_split": split,
-                        "category": cat,
-                    })
+                    records.append(
+                        {
+                            "prompt": cand,
+                            "label": "unsafe",
+                            "source": "hh_rlhf",
+                            "source_split": split,
+                            "category": cat,
+                        }
+                    )
                     if len(records) >= max_records:
                         return dedupe_records(records)
     return dedupe_records(records)
@@ -189,13 +273,15 @@ def extract_unsafe_from_hatecheck() -> List[dict]:
             # Ensure the prompt reads as a complete utterance.
             if not text.endswith(("?", ".", "!")):
                 text += "."
-            records.append({
-                "prompt": text,
-                "label": "unsafe",
-                "source": "hatecheck",
-                "source_split": split,
-                "category": "hate_speech",
-            })
+            records.append(
+                {
+                    "prompt": text,
+                    "label": "unsafe",
+                    "source": "hatecheck",
+                    "source_split": split,
+                    "category": "hate_speech",
+                }
+            )
     return dedupe_records(records)
 
 
@@ -207,9 +293,7 @@ def extract_unsafe_from_openai_moderation() -> List[dict]:
     ds = load_openai_moderation()
     records: List[dict] = []
     for ex in tqdm(ds["train"], desc="OpenAI Moderation"):
-        text = make_one_line(
-            ex.get("prompt", ex.get("text", ex.get("input", "")))
-        )
+        text = make_one_line(ex.get("prompt", ex.get("text", ex.get("input", ""))))
         if not looks_like_question_or_instruction(text):
             continue
         cats = ex.get("categories", {})
@@ -219,19 +303,22 @@ def extract_unsafe_from_openai_moderation() -> List[dict]:
             flagged = bool(ex.get("flagged", True))
         if not flagged:
             continue
-        records.append({
-            "prompt": text,
-            "label": "unsafe",
-            "source": "openai_moderation",
-            "source_split": "train",
-            "category": categorize_unsafe_text(text),
-        })
+        records.append(
+            {
+                "prompt": text,
+                "label": "unsafe",
+                "source": "openai_moderation",
+                "source_split": "train",
+                "category": categorize_unsafe_text(text),
+            }
+        )
     return dedupe_records(records)
 
 
 # ---------------------------------------------------------------------------
 # Sampling
 # ---------------------------------------------------------------------------
+
 
 def balanced_sample(records: List[dict], n: int, seed: int) -> List[dict]:
     """

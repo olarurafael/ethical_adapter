@@ -1,23 +1,19 @@
-# src/ethical_adapter/config_io.py
-import yaml
 import os
 from typing import Any, Dict
 
+import yaml
+
 
 def load_yaml_config(path: str) -> Dict[str, Any]:
-    """
-    Load a YAML config file into a Python dict.
-    If the path is relative, resolve it relative to the project root.
-    """
+    """Load a YAML config file into a Python dict."""
     if not os.path.exists(path):
         raise FileNotFoundError(f"Config file not found: {path}")
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
     if cfg is None:
         raise ValueError(f"YAML config file {path} is empty or invalid.")
 
-    # sanitize numeric types
     for key in [
         "lr",
         "alpha",
@@ -30,7 +26,6 @@ def load_yaml_config(path: str) -> Dict[str, Any]:
     ]:
         if key in cfg and isinstance(cfg[key], str):
             try:
-                # convert scientific notation or numeric strings
                 cfg[key] = (
                     float(cfg[key])
                     if "." in cfg[key] or "e" in cfg[key].lower()

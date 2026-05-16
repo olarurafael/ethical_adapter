@@ -1,4 +1,3 @@
-# src/ethical_adapter/alignguard/compute_alignment_fisher.py
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -63,7 +62,7 @@ def main(cfg):
     logger = DummyLogger()
     align_ds = build_alignment_dataset(cfg, logger=logger)
     align_ds = prepare_alignment_dataset(align_ds, tokenizer, cfg)
-    
+
     loader = DataLoader(
         align_ds,
         batch_size=BATCH_SIZE,
@@ -78,11 +77,11 @@ def main(cfg):
     init_samples = int(cfg.get("alignguard_oja_init_samples", rank_per_block))
 
     estimators = {}
-    for name, pl in iter_gated_adapters(model):
+    for name, adapter_module in iter_gated_adapters(model):
         key = f"{name}.adapter"
-        dW = compute_delta_w(pl)
+        delta_weight = compute_delta_w(adapter_module)
         estimators[key] = BlockwiseOjaEstimator(
-            total_dim=dW.numel(),
+            total_dim=delta_weight.numel(),
             block_size=block_size,
             rank_per_block=rank_per_block,
             eta0=eta0,
@@ -109,11 +108,11 @@ def main(cfg):
         )
         outputs.loss.backward()
 
-        for name, pl in iter_gated_adapters(model):
+        for name, adapter_module in iter_gated_adapters(model):
             key = f"{name}.adapter"
-            gW = get_last_delta_grad(pl)
-            if gW is not None:
-                estimators[key].update(gW.detach().float().cpu().flatten())
+            delta_grad = get_last_delta_grad(adapter_module)
+            if delta_grad is not None:
+                estimators[key].update(delta_grad.detach().float().cpu().flatten())
 
         step += 1
         if step % 25 == 0:

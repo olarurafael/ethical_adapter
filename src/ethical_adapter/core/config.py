@@ -1,6 +1,6 @@
-# src/ethical_adapter/config.py
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 
 @dataclass
@@ -10,7 +10,7 @@ class GateConfig:
     temperature: float = 1.0
     dropout: float = 0.0
     pooling: str = "mean"  # how to reduce (batch, seq, dim) -> (batch, dim)
-    hard_threshold: Optional[float] = None
+    hard_threshold: float | None = None
 
     def __post_init__(self):
         if self.enabled and not self.source_module:
@@ -30,12 +30,10 @@ class AdapterConfig:
     rank: int = 8  # r in LoRA
     alpha: float = 16.0  # scale of the low-rank update
     dropout: float = 0.0  # optional dropout on adapter path
-    target_modules: List[str] = None  # modules to apply adapters to
+    target_modules: list[str] = field(default_factory=list)
     gate: GateConfig = field(default_factory=GateConfig)
 
     def __post_init__(self):
-        if self.target_modules is None:
-            self.target_modules = []
         if self.rank <= 0:
             raise ValueError("rank must be > 0")
         if self.alpha <= 0:

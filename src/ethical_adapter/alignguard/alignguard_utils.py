@@ -1,4 +1,3 @@
-# src/ethical_adapter/training/alignguard_utils.py
 import torch
 from ethical_adapter.core.adapter import GatedAdapter
 
@@ -9,56 +8,61 @@ def iter_gated_adapters(model):
             yield name, module
 
 
-def compute_delta_w(pl: GatedAdapter) -> torch.Tensor:
-    return pl.adapter.delta_weight()
+def compute_delta_w(adapter_module: GatedAdapter) -> torch.Tensor:
+    return adapter_module.adapter.delta_weight()
 
 
 def set_capture_delta_grad(model, enabled: bool):
-    for _, pl in iter_gated_adapters(model):
-        pl.capture_delta_grad = enabled
+    for _, adapter_module in iter_gated_adapters(model):
+        adapter_module.capture_delta_grad = enabled
         if not enabled:
-            pl._last_delta_w = None
+            adapter_module._last_delta_w = None
 
 
-def get_last_delta_grad(pl: GatedAdapter) -> torch.Tensor | None:
-    dW = getattr(pl, "_last_delta_w", None)
-    if dW is None:
+def get_last_delta_grad(adapter_module: GatedAdapter) -> torch.Tensor | None:
+    delta_weight = getattr(adapter_module, "_last_delta_w", None)
+    if delta_weight is None:
         return None
-    return dW.grad
+    return delta_weight.grad
 
 
-def project_delta_w(dW: torch.Tensor, proj_entry: dict):
+def project_delta_w(delta_weight: torch.Tensor, proj_entry: dict):
     """
     Blockwise projector:
       vec(ΔW)_A = concat_b U_b (U_b^T vec(ΔW)_b)
       vec(ΔW)_T = vec(ΔW) - vec(ΔW)_A
     """
-    flat = dW.flatten()
+    flat = delta_weight.flatten()
     if proj_entry.get("type") != "block_subspace":
-        raise ValueError(f"Expected block_subspace projector, got {proj_entry.get('type')}")
+        raise ValueError(
+            f"Expected block_subspace projector, got {proj_entry.get('type')}"
+        )
 
     flat_A = torch.zeros_like(flat)
 
     for (s, e), blk in zip(proj_entry["ranges"], proj_entry["blocks"]):
-        U = blk["U"].to(device=dW.device, dtype=dW.dtype)          # (block_dim, r)
+        U = blk["U"].to(device=delta_weight.device, dtype=delta_weight.dtype)
         x = flat[s:e]
         flat_A[s:e] = U @ (U.T @ x)
 
     flat_T = flat - flat_A
-    return flat_A.view_as(dW), flat_T.view_as(dW)
+    return flat_A.view_as(delta_weight), flat_T.view_as(delta_weight)
 
 
-def fisher_quadratic_from_block_subspace(dW: torch.Tensor, proj_entry: dict) -> torch.Tensor:
+def fisher_quadratic_from_block_subspace(
+    delta_weight: torch.Tensor,
+    proj_entry: dict,
+) -> torch.Tensor:
     """
     Approximate vec(dW)^T F vec(dW) with blockwise low-rank Fisher:
       sum_b x_b^T U_b diag(evals_b) U_b^T x_b
     """
-    flat = dW.flatten()
-    out = torch.zeros((), device=dW.device, dtype=dW.dtype)
+    flat = delta_weight.flatten()
+    out = torch.zeros((), device=delta_weight.device, dtype=delta_weight.dtype)
 
     for (s, e), blk in zip(proj_entry["ranges"], proj_entry["blocks"]):
-        U = blk["U"].to(device=dW.device, dtype=dW.dtype)
-        evals = blk["evals"].to(device=dW.device, dtype=dW.dtype)
+        U = blk["U"].to(device=delta_weight.device, dtype=delta_weight.dtype)
+        evals = blk["evals"].to(device=delta_weight.device, dtype=delta_weight.dtype)
         coeff = U.T @ flat[s:e]
         out = out + torch.sum(evals * coeff.pow(2))
 
@@ -86,33 +90,41 @@ def alignguard_loss(
     tau = 0.01
     eps = 1e-8
 
-    for name, pl in iter_gated_adapters(model):
+    for name, adapter_module in iter_gated_adapters(model):
         key = f"{name}.adapter"
         if key not in fisher_dict:
             continue
 
-        dW = compute_delta_w(pl)
+        delta_weight = compute_delta_w(adapter_module)
         proj_entry = fisher_dict[key]
 
-        dW_A, dW_T = project_delta_w(dW, proj_entry)
+        alignment_component, task_component = project_delta_w(delta_weight, proj_entry)
 
-        loss_align = loss_align + fisher_quadratic_from_block_subspace(dW_A, proj_entry)
+        loss_align = loss_align + fisher_quadratic_from_block_subspace(
+            alignment_component,
+            proj_entry,
+        )
 
         if lambda_task > 0:
             if task_curv_dict is not None and key in task_curv_dict:
-                Hdiag = task_curv_dict[key].to(device=dW.device, dtype=dW.dtype)
+                task_curvature_diag = task_curv_dict[key].to(
+                    device=delta_weight.device,
+                    dtype=delta_weight.dtype,
+                )
             else:
-                Hdiag = torch.ones_like(dW_T)
-            loss_task = loss_task + torch.sum(Hdiag * dW_T.pow(2))
+                task_curvature_diag = torch.ones_like(task_component)
+            loss_task = loss_task + torch.sum(
+                task_curvature_diag * task_component.pow(2)
+            )
 
-        mag = torch.abs(dW_A + dW_T)
+        mag = torch.abs(alignment_component + task_component)
         eta = 1.0 + beta * torch.sigmoid(mag - tau)
-        loss_riem = loss_riem + torch.sum(eta * dW_A * dW_T)
+        loss_riem = loss_riem + torch.sum(eta * alignment_component * task_component)
 
-        dot = torch.sum(dW_A * dW_T)
-        normA = torch.sqrt(torch.sum(dW_A.pow(2)) + eps)
-        normT = torch.sqrt(torch.sum(dW_T.pow(2)) + eps)
-        loss_geo = loss_geo + (dot / (normA * normT + eps)).pow(2)
+        dot = torch.sum(alignment_component * task_component)
+        alignment_norm = torch.sqrt(torch.sum(alignment_component.pow(2)) + eps)
+        task_norm = torch.sqrt(torch.sum(task_component.pow(2)) + eps)
+        loss_geo = loss_geo + (dot / (alignment_norm * task_norm + eps)).pow(2)
 
     return (
         lambda_align * loss_align
@@ -125,8 +137,8 @@ def alignguard_loss(
 @torch.no_grad()
 def init_task_curvature_identity(model) -> dict:
     curv = {}
-    for name, pl in iter_gated_adapters(model):
+    for name, adapter_module in iter_gated_adapters(model):
         key = f"{name}.adapter"
-        dW = compute_delta_w(pl)
-        curv[key] = torch.ones_like(dW, device="cpu", dtype=torch.float32)
+        delta_weight = compute_delta_w(adapter_module)
+        curv[key] = torch.ones_like(delta_weight, device="cpu", dtype=torch.float32)
     return curv

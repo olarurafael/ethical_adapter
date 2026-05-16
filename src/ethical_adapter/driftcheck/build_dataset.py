@@ -10,6 +10,7 @@ Outputs:
     <output_dir>/build_report.json      — pool sizes, category distribution, seed
     <output_dir>/metadata.json          — dataset provenance card
 """
+
 from __future__ import annotations
 
 import argparse
@@ -37,12 +38,13 @@ def main() -> None:
         description="Build the DRIFTCHECK benchmark (AlignGuard-LoRA, §2)."
     )
     parser.add_argument(
-        "--output_dir", type=str, required=True,
-        help="Directory where all output files will be written."
+        "--output_dir",
+        type=str,
+        required=True,
+        help="Directory where all output files will be written.",
     )
     parser.add_argument(
-        "--seed", type=int, default=42,
-        help="Global RNG seed for reproducibility."
+        "--seed", type=int, default=42, help="Global RNG seed for reproducibility."
     )
     args = parser.parse_args()
 
@@ -94,9 +96,9 @@ def main() -> None:
     write_jsonl(outdir / "driftcheck_10k.jsonl", full)
     pd.DataFrame(full).to_csv(outdir / "driftcheck_10k.csv", index=False)
 
-    unsafe_cats = pd.Series(
-        [x["category"] for x in unsafe_sample]
-    ).value_counts().to_dict()
+    unsafe_cats = (
+        pd.Series([x["category"] for x in unsafe_sample]).value_counts().to_dict()
+    )
 
     report = {
         "n_total": len(full),
@@ -131,8 +133,12 @@ def main() -> None:
                 "safe_sources": ["mmlu"],
                 "unsafe_sources": ["hh_rlhf", "hatecheck", "openai_moderation"],
                 "unsafe_categories": [
-                    "violence", "hate_speech", "illegal_activity",
-                    "explicit", "privacy", "disinformation",
+                    "violence",
+                    "hate_speech",
+                    "illegal_activity",
+                    "explicit",
+                    "privacy",
+                    "disinformation",
                 ],
             },
             f,

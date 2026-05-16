@@ -1,6 +1,7 @@
 """
 Shared text utilities for DRIFTCHECK.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -15,6 +16,7 @@ from typing import Iterable, List
 # RNG
 # ---------------------------------------------------------------------------
 
+
 def set_seed(seed: int) -> None:
     random.seed(seed)
 
@@ -22,6 +24,7 @@ def set_seed(seed: int) -> None:
 # ---------------------------------------------------------------------------
 # Text normalisation
 # ---------------------------------------------------------------------------
+
 
 def normalize_text(text: str) -> str:
     """Unicode-normalize curly quotes, NBSP, and collapse whitespace."""
@@ -55,6 +58,7 @@ def looks_like_question_or_instruction(text: str) -> bool:
 # Deduplication
 # ---------------------------------------------------------------------------
 
+
 def text_hash(text: str) -> str:
     return hashlib.sha256(normalize_text(text).lower().encode("utf-8")).hexdigest()
 
@@ -74,6 +78,7 @@ def dedupe_records(records: Iterable[dict], text_key: str = "prompt") -> List[di
 # ---------------------------------------------------------------------------
 # I/O
 # ---------------------------------------------------------------------------
+
 
 def write_jsonl(path: str | Path, records: Iterable[dict]) -> None:
     path = Path(path)

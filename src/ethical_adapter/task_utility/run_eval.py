@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from ethical_adapter.config_io import load_yaml_config
 from ethical_adapter.driftcheck.scorers import HFGenerator
-from ethical_adapter.task_utility.tasks import get_task_spec, load_task_dataframe
+from ethical_adapter.task_utility.task_specs import get_task_spec, load_task_dataframe
 
 
 def _looks_like_adapter_config(cfg: dict) -> bool:
@@ -67,7 +67,10 @@ def _resolve_model_and_adapter_config(args) -> tuple[str, dict | None]:
 
 
 def _render_prompt_and_choice(tokenizer, prompt: str, choice: str) -> tuple[str, str]:
-    if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template is not None:
+    if (
+        hasattr(tokenizer, "apply_chat_template")
+        and tokenizer.chat_template is not None
+    ):
         prompt_text = tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt}],
             tokenize=False,
@@ -98,7 +101,9 @@ def _score_choices(
     tokenizer = generator.tokenizer
     model = generator.model
 
-    rendered = [_render_prompt_and_choice(tokenizer, prompt, choice) for choice in choices]
+    rendered = [
+        _render_prompt_and_choice(tokenizer, prompt, choice) for choice in choices
+    ]
     prompt_texts = [x[0] for x in rendered]
     full_texts = [x[1] for x in rendered]
 
@@ -127,9 +132,11 @@ def _score_choices(
         logits = model(**enc).logits[:, :-1, :]
         target_ids = enc["input_ids"][:, 1:]
         target_mask = enc["attention_mask"][:, 1:].bool()
-        token_logprobs = torch.log_softmax(logits, dim=-1).gather(
-            -1, target_ids.unsqueeze(-1)
-        ).squeeze(-1)
+        token_logprobs = (
+            torch.log_softmax(logits, dim=-1)
+            .gather(-1, target_ids.unsqueeze(-1))
+            .squeeze(-1)
+        )
 
     scores: dict[str, float] = {}
     for idx, choice in enumerate(choices):
@@ -158,60 +165,87 @@ def main() -> None:
         choices=["boolq", "mnli", "mrpc", "multirc", "qnli", "qqp", "sst2", "wic"],
     )
     parser.add_argument(
-        "--model_name", type=str, default=None,
+        "--model_name",
+        type=str,
+        default=None,
         help="HuggingFace model id or local path (for plain base-model eval).",
     )
     parser.add_argument(
-        "--config", type=str, default=None,
+        "--config",
+        type=str,
+        default=None,
         help="Training/eval config (yaml/json) used for adapter injection.",
     )
     parser.add_argument(
-        "--adapter_checkpoint", type=str, default=None,
+        "--adapter_checkpoint",
+        type=str,
+        default=None,
         help="Checkpoint dir with adapter weights to load into injected modules.",
     )
     parser.add_argument(
-        "--gate_checkpoint", type=str, default=None,
+        "--gate_checkpoint",
+        type=str,
+        default=None,
         help="Optional checkpoint dir with gate weights.",
     )
     parser.add_argument(
-        "--adapter_mode", type=str, default="auto",
+        "--adapter_mode",
+        type=str,
+        default="auto",
         choices=["auto", "on", "off", "gate"],
         help="Injected adapter execution mode.",
     )
     parser.add_argument(
-        "--output_dir", type=str, required=True,
+        "--output_dir",
+        type=str,
+        required=True,
         help="Directory for predictions.jsonl and metrics.json.",
     )
     parser.add_argument(
-        "--limit", type=int, default=None,
+        "--limit",
+        type=int,
+        default=None,
         help="Cap the number of evaluation examples.",
     )
     parser.add_argument(
-        "--seed", type=int, default=0,
+        "--seed",
+        type=int,
+        default=0,
         help="Shuffle seed before applying --limit.",
     )
     parser.add_argument(
-        "--cache_dir", type=str, default="./data",
+        "--cache_dir",
+        type=str,
+        default="./data",
         help="Dataset cache dir passed to HuggingFace datasets.",
     )
     parser.add_argument(
-        "--score_max_length", type=int, default=1024,
+        "--score_max_length",
+        type=int,
+        default=1024,
         help="Max tokenized length used for prompt+answer scoring.",
     )
     parser.add_argument(
-        "--preflight_prompts", type=int, default=16,
+        "--preflight_prompts",
+        type=int,
+        default=16,
         help="How many task prompts to use for adapter-effect preflight.",
     )
     parser.add_argument(
-        "--preflight_max_new_tokens", type=int, default=16,
+        "--preflight_max_new_tokens",
+        type=int,
+        default=16,
         help="Max tokens for preflight generations.",
     )
     parser.add_argument(
-        "--preflight_min_change_rate", type=float, default=0.05,
+        "--preflight_min_change_rate",
+        type=float,
+        default=0.05,
         help="Minimum required output change rate vs baseline mode.",
     )
     parser.add_argument(
-        "--allow_preflight_fail", action="store_true",
+        "--allow_preflight_fail",
+        action="store_true",
         help="If set, do not fail the run when adapter-effect preflight fails.",
     )
     args = parser.parse_args()
@@ -227,7 +261,9 @@ def main() -> None:
         seed=args.seed,
         cache_dir=args.cache_dir,
     )
-    print(f"Loaded {len(df)} examples for task '{args.task}' from {spec.dataset_name}/{spec.config_name}.")
+    print(
+        f"Loaded {len(df)} examples for task '{args.task}' from {spec.dataset_name}/{spec.config_name}."
+    )
 
     generator = HFGenerator(
         model_name,

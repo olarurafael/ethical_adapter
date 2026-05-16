@@ -58,7 +58,7 @@ class OjaBlock:
             extra, _ = torch.linalg.qr(extra, mode="reduced")
             Q = torch.cat([Q, extra[:, :pad]], dim=1)
 
-        self.U = Q[:, :self.rank].contiguous()
+        self.U = Q[:, : self.rank].contiguous()
         self.evals = torch.zeros(self.rank, dtype=self.dtype, device=self.device)
         self._buffer = []
 
@@ -91,7 +91,9 @@ class OjaBlock:
     @torch.no_grad()
     def finalize(self):
         if self.U is None:
-            raise RuntimeError("Block estimator never initialized; increase init_samples or minibatches.")
+            raise RuntimeError(
+                "Block estimator never initialized; increase init_samples or minibatches."
+            )
         self.U, _ = torch.linalg.qr(self.U, mode="reduced")
         evals = torch.clamp(self.evals, min=0.0)
         return {

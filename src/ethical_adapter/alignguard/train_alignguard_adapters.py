@@ -1,4 +1,3 @@
-# src/ethical_adapter/alignguard/train_alignguard_adapters.py
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -56,7 +55,7 @@ def eval_step(model, loader):
 
     return total_loss / max(count, 1)
 
-    
+
 @torch.no_grad()
 def _cycle_loader(loader):
     while True:
@@ -83,11 +82,11 @@ def recompute_alignment_projector(
     model.eval()
 
     estimators = {}
-    for name, pl in iter_gated_adapters(model):
+    for name, adapter_module in iter_gated_adapters(model):
         key = f"{name}.adapter"
-        dW = compute_delta_w(pl)
+        delta_weight = compute_delta_w(adapter_module)
         estimators[key] = BlockwiseOjaEstimator(
-            total_dim=dW.numel(),
+            total_dim=delta_weight.numel(),
             block_size=block_size,
             rank_per_block=rank_per_block,
             eta0=eta0,
@@ -109,17 +108,19 @@ def recompute_alignment_projector(
         outputs = model(**batch, labels=batch["input_ids"])
         if not torch.isfinite(outputs.loss):
             if logger is not None:
-                logger.warning("Skipping projector refresh minibatch with non-finite loss.")
+                logger.warning(
+                    "Skipping projector refresh minibatch with non-finite loss."
+                )
             continue
         outputs.loss.backward()
 
         saw_valid_grad = False
 
-        for name, pl in iter_gated_adapters(model):
+        for name, adapter_module in iter_gated_adapters(model):
             key = f"{name}.adapter"
-            gW = get_last_delta_grad(pl)
-            if gW is not None:
-                flat_grad = gW.detach().float().cpu().flatten()
+            delta_grad = get_last_delta_grad(adapter_module)
+            if delta_grad is not None:
+                flat_grad = delta_grad.detach().float().cpu().flatten()
                 if torch.isfinite(flat_grad).all():
                     estimators[key].update(flat_grad)
                     saw_valid_grad = True
@@ -158,12 +159,10 @@ def recompute_alignment_projector(
         )
     return {k: est.finalize() for k, est in estimators.items()}
 
-# adapter training main function
+
 def main(config):
-    # setup logging & run directory
     run_dir, logger = setup_run(config)
 
-    # Early stopping
     es_cfg = config.get("early_stop", {})
     early_stop = EarlyStopManager(
         run_dir=run_dir,
@@ -172,7 +171,6 @@ def main(config):
         min_delta=es_cfg.get("min_delta", 0.0),
     )
 
-    # load tokenizer and base model
     tokenizer_name = config.get("tokenizer_name", config.get("local_path"))
     model_name = config.get("model_name", config.get("local_path"))
 
@@ -187,7 +185,6 @@ def main(config):
         device_map="auto",
     )
 
-    # inject adapters and gate controller
     adapter_cfg = AdapterConfig(
         rank=config["rank"],
         alpha=config["alpha"],
@@ -198,9 +195,7 @@ def main(config):
 
     injected = inject_adapters(base_model, adapter_cfg)
     model = injected.model
-    # gate_controller = injected.gate_controller
 
-    # Freeze or unfreeze parameters
     prepare_model_for_adapter_training(model)
     for m in model.modules():
         if isinstance(m, GatedAdapter):
@@ -208,7 +203,6 @@ def main(config):
 
     model.to(next(model.parameters()).device)
 
-    # Warm-start adapters ONLY if explicitly provided in config
     load_dir = config.get("load_adapters_from", None)
 
     if load_dir:
@@ -217,7 +211,6 @@ def main(config):
     else:
         logger.info("No adapter checkpoint specified; training from scratch.")
 
-        # ---- AlignGuard: load alignment Fisher (optional) ----
     fisher_path = config.get("alignment_fisher_path", None)
     alignment_fisher = None
     ag_cfg = config.get("alignguard", {})
@@ -236,17 +229,16 @@ def main(config):
     oja_orth_every = int(config.get("alignguard_oja_orth_every", 10))
     oja_init_samples = int(config.get("alignguard_oja_init_samples", rank_per_block))
 
-    # Optional task-curvature proxy (EMA); init only if AlignGuard is on
     task_curvature = None
     if use_alignguard and float(ag_cfg.get("lambda_task", 0.0)) > 0.0:
         task_curvature = init_task_curvature_identity(model)
-        logger.info(f"Initialized task regularizer H=I for {len(task_curvature)} layers")
+        logger.info(
+            f"Initialized task regularizer H=I for {len(task_curvature)} layers"
+        )
     if use_alignguard:
         logger.info(f"AlignGuard enabled. Fisher entries: {len(alignment_fisher)}")
     else:
         logger.info("AlignGuard disabled (no alignment_fisher_path set).")
-        print("WARNING: You are training with AlignGuard objectives disabled. Set 'alignment_fisher_path' in")
-
 
     full_task_ds = build_task_dataset(config, logger)
     splits = full_task_ds.train_test_split(test_size=0.1, seed=42)
@@ -254,16 +246,24 @@ def main(config):
     train_ds, collator = prepare_task_dataset(splits["train"], tokenizer, config)
     val_ds, _ = prepare_task_dataset(splits["test"], tokenizer, config)
 
-
     loader_kwargs = dict(
         batch_size=config["batch_size"],
         num_workers=int(config.get("num_workers", 0)),
     )
 
-    train_loader = DataLoader(train_ds, shuffle=True, collate_fn=collator, **loader_kwargs)
-    val_loader   = DataLoader(val_ds, shuffle=False, collate_fn=collator, **loader_kwargs)
+    train_loader = DataLoader(
+        train_ds,
+        shuffle=True,
+        collate_fn=collator,
+        **loader_kwargs,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        shuffle=False,
+        collate_fn=collator,
+        **loader_kwargs,
+    )
 
-    # Separate alignment-preservation loader for projector refresh
     align_full_ds = build_alignment_dataset(config, logger)
     align_ds = prepare_alignment_dataset(align_full_ds, tokenizer, config)
 
@@ -274,8 +274,7 @@ def main(config):
         **loader_kwargs,
     )
     align_batch_iter = _cycle_loader(align_loader)
-   
-    # optimizer + scheduler
+
     optimizer = get_adapter_optimizer(
         model, config["lr"], config.get("weight_decay", 0.01)
     )
@@ -290,7 +289,6 @@ def main(config):
     best_val = float("inf")
     save_adapter_only = bool(config.get("save_adapter_only", False))
 
-    # training loop
     global_step = 0
     use_amp = True
 
@@ -307,12 +305,7 @@ def main(config):
             if global_step % grad_accum == 0:
                 optimizer.zero_grad()
 
-
-            if (
-                use_alignguard
-                and global_step > 0
-                and global_step % refresh_every == 0
-            ):
+            if use_alignguard and global_step > 0 and global_step % refresh_every == 0:
                 logger.info(
                     f"Recomputing AlignGuard projector at step {global_step} "
                     f"from {refresh_batches} alignment minibatches"
@@ -339,7 +332,6 @@ def main(config):
                     labels=labels,
                 )
                 loss = outputs.loss / grad_accum
-                # ---- AlignGuard-LoRA objective (adapter-space, ΔW-based) ----
                 if use_alignguard:
                     ag_term = alignguard_loss(
                         model=model,
@@ -379,7 +371,6 @@ def main(config):
         )
         print_param_summary(model)
 
-        # Save checkpoints
         if (epoch + 1) % config["save_every"] == 0:
             save_training_checkpoint(
                 model,
@@ -402,7 +393,6 @@ def main(config):
                 adapter_only=save_adapter_only,
             )
 
-        # early stopping
         if early_stop.should_stop(val_loss, epoch + 1):
             reason = early_stop.reason
             logger.info("Early stopping triggered (%s).", reason)
@@ -422,8 +412,6 @@ def main(config):
 if __name__ == "__main__":
     import argparse
     from ethical_adapter.config_io import load_yaml_config
-
-    print("Starting training...")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)

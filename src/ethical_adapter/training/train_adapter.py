@@ -1,4 +1,3 @@
-# src/ethical_adapter/train_adapter.py
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -16,7 +15,7 @@ from ethical_adapter.training.load_adapters import load_adapters_from_checkpoint
 from ethical_adapter.training.data import (
     build_task_dataset,
     tokenize_text_dataset,
-    tokenize_supervised_dataset
+    tokenize_supervised_dataset,
 )
 from ethical_adapter.core.adapter import GatedAdapter
 from ethical_adapter.training.optim_utils import (
@@ -27,7 +26,6 @@ from ethical_adapter.training.optim_utils import (
 from ethical_adapter.training.data import SupervisedCollator
 
 
-# eval step for adapter training
 @torch.no_grad()
 def eval_step(model, loader):
     model.eval()
@@ -47,12 +45,9 @@ def eval_step(model, loader):
     return total_loss / max(count, 1)
 
 
-# adapter training main function
 def main(config):
-    # setup logging & run directory
     run_dir, logger = setup_run(config)
 
-    # Early stopping
     es_cfg = config.get("early_stop", {})
     early_stop = EarlyStopManager(
         run_dir=run_dir,
@@ -61,7 +56,6 @@ def main(config):
         min_delta=es_cfg.get("min_delta", 0.0),
     )
 
-    # load tokenizer and base model
     tokenizer_name = config.get("tokenizer_name", config.get("local_path"))
     model_name = config.get("model_name", config.get("local_path"))
 
@@ -76,7 +70,6 @@ def main(config):
         device_map="auto",
     )
 
-    # inject adapters and gate controller
     adapter_cfg = AdapterConfig(
         rank=config["rank"],
         alpha=config["alpha"],
@@ -87,9 +80,7 @@ def main(config):
 
     injected = inject_adapters(base_model, adapter_cfg)
     model = injected.model
-    # gate_controller = injected.gate_controller
 
-    # Freeze or unfreeze parameters
     prepare_model_for_adapter_training(model)
     for m in model.modules():
         if isinstance(m, GatedAdapter):
@@ -97,7 +88,6 @@ def main(config):
 
     model.to(next(model.parameters()).device)
 
-    # Warm-start adapters ONLY if explicitly provided in config
     load_dir = config.get("load_adapters_from", None)
 
     if load_dir:
@@ -106,7 +96,6 @@ def main(config):
     else:
         logger.info("No adapter checkpoint specified; training from scratch.")
 
-    # load datasets for this phase
     full_ds = build_task_dataset(config, logger)
 
     splits = full_ds.train_test_split(test_size=0.1, seed=42)
@@ -137,7 +126,6 @@ def main(config):
         **loader_kwargs,
     )
 
-    # optimizer + scheduler
     optimizer = get_adapter_optimizer(
         model, config["lr"], config.get("weight_decay", 0.01)
     )
@@ -152,7 +140,6 @@ def main(config):
     best_val = float("inf")
     save_adapter_only = bool(config.get("save_adapter_only", False))
 
-    # training loop
     global_step = 0
     use_amp = True
 
@@ -205,7 +192,6 @@ def main(config):
         )
         print_param_summary(model)
 
-        # Save checkpoints
         if (epoch + 1) % config["save_every"] == 0:
             save_training_checkpoint(
                 model,
@@ -228,7 +214,6 @@ def main(config):
                 adapter_only=save_adapter_only,
             )
 
-        # early stopping
         if early_stop.should_stop(val_loss, epoch + 1):
             reason = early_stop.reason
             logger.info("Early stopping triggered (%s).", reason)

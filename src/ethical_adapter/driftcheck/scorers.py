@@ -8,6 +8,7 @@ RefusalJudge    — pattern-based refusal classifier (paper §2 proxy metric).
 ToxicityScorer  — Detoxify-based toxicity scorer.
 toxicity_probability — aggregate metric: P(toxicity >= threshold).
 """
+
 from __future__ import annotations
 
 import re
@@ -31,10 +32,11 @@ from ethical_adapter.core.inject import inject_adapters
 # Generation
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class GenerationConfig:
     max_new_tokens: int = 128
-    temperature: float = 0.0   # 0.0 → greedy; matches paper single-pass eval
+    temperature: float = 0.0  # 0.0 → greedy; matches paper single-pass eval
     do_sample: bool = False
 
 
@@ -54,10 +56,14 @@ class HFGenerator:
         adapter_mode: str = "auto",
     ):
         tokenizer_name = (
-            adapter_config.get("tokenizer_name")
-            or adapter_config.get("local_path")
-            or model_name
-        ) if adapter_config else model_name
+            (
+                adapter_config.get("tokenizer_name")
+                or adapter_config.get("local_path")
+                or model_name
+            )
+            if adapter_config
+            else model_name
+        )
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -65,10 +71,14 @@ class HFGenerator:
         self.tokenizer.padding_side = "left"
 
         model_path = (
-            adapter_config.get("local_path")
-            or adapter_config.get("model_name")
-            or model_name
-        ) if adapter_config else model_name
+            (
+                adapter_config.get("local_path")
+                or adapter_config.get("model_name")
+                or model_name
+            )
+            if adapter_config
+            else model_name
+        )
 
         base_model = AutoModelForCausalLM.from_pretrained(
             model_path,
@@ -139,8 +149,10 @@ class HFGenerator:
     def generate(self, prompts: List[str], cfg: GenerationConfig) -> List[str]:
         formatted: List[str] = []
         for p in prompts:
-            if hasattr(self.tokenizer, "apply_chat_template") and \
-               self.tokenizer.chat_template is not None:
+            if (
+                hasattr(self.tokenizer, "apply_chat_template")
+                and self.tokenizer.chat_template is not None
+            ):
                 formatted.append(
                     self.tokenizer.apply_chat_template(
                         [{"role": "user", "content": p}],
@@ -170,7 +182,7 @@ class HFGenerator:
 
         # Strip the prompt tokens from the output.
         decoded = self.tokenizer.batch_decode(
-            out[:, toks["input_ids"].shape[1]:],
+            out[:, toks["input_ids"].shape[1] :],
             skip_special_tokens=True,
         )
         return [x.strip() for x in decoded]
@@ -224,7 +236,9 @@ class HFGenerator:
                 "reason": "target_equals_baseline",
             }
 
-        cfg = GenerationConfig(max_new_tokens=max_new_tokens, do_sample=False, temperature=0.0)
+        cfg = GenerationConfig(
+            max_new_tokens=max_new_tokens, do_sample=False, temperature=0.0
+        )
         with self._temporary_adapter_mode(baseline_mode):
             baseline_outputs = self.generate(prompts, cfg)
         with self._temporary_adapter_mode(target_mode):
@@ -394,16 +408,12 @@ class RefusalJudge:
     """
 
     def __init__(self) -> None:
-        self._refusal_re = [
-            re.compile(p, re.IGNORECASE) for p in _REFUSAL_PATTERNS
-        ]
-        self._helpful_re = [
-            re.compile(p, re.IGNORECASE) for p in _HELPFUL_PATTERNS
-        ]
+        self._refusal_re = [re.compile(p, re.IGNORECASE) for p in _REFUSAL_PATTERNS]
+        self._helpful_re = [re.compile(p, re.IGNORECASE) for p in _HELPFUL_PATTERNS]
 
     def score(
         self,
-        prompt: str,   # noqa: ARG002 — kept for API compatibility / future use
+        prompt: str,  # noqa: ARG002 — kept for API compatibility / future use
         response: str,
         unsafe_prompt: bool,
     ) -> RefusalScore:
@@ -431,6 +441,7 @@ class RefusalJudge:
 # ---------------------------------------------------------------------------
 # Toxicity Scorer
 # ---------------------------------------------------------------------------
+
 
 class ToxicityScorer:
     """

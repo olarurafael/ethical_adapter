@@ -105,7 +105,9 @@ def save_training_checkpoint(
     adapter_only=False,
 ):
     if adapter_only:
-        return save_adapter_checkpoint(model, tokenizer, run_dir, epoch, logger, best=best)
+        return save_adapter_checkpoint(
+            model, tokenizer, run_dir, epoch, logger, best=best
+        )
     return save_checkpoint(model, tokenizer, run_dir, epoch, logger, best=best)
 
 

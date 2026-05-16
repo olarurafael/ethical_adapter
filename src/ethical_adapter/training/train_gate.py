@@ -1,4 +1,3 @@
-# src/ethical_adapter/train_gate.py
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -27,12 +26,11 @@ from ethical_adapter.training.optim_utils import (
 )
 
 
-def gate_loss(gate_logits, labels):
+def binary_gate_loss(gate_logits, labels):
     if gate_logits.dim() == 2 and gate_logits.size(-1) == 1:
         gate_logits = gate_logits.squeeze(-1)
     target = labels.to(gate_logits.device, gate_logits.dtype)
     return F.binary_cross_entropy_with_logits(gate_logits, target)
-
 
 
 @torch.no_grad()
@@ -42,24 +40,17 @@ def eval_step(model, loader):
 
     for batch in loader:
         batch = {k: v.to(model.device) for k, v in batch.items()}
-
         _ = model(**batch)
-
         gate_logits = model.gate_cache.logits
-
-        loss = gate_loss(gate_logits, batch["label"])
-
+        loss = binary_gate_loss(gate_logits, batch["label"])
         total_loss += loss.item()
 
     return total_loss / len(loader)
 
 
-# gate training main function
 def main(config):
-    # Setup logging & run directory
     run_dir, logger = setup_run(config)
 
-    # Early stopping
     es_cfg = config.get("early_stop", {})
     early_stop = EarlyStopManager(
         run_dir=run_dir,
@@ -68,9 +59,6 @@ def main(config):
         min_delta=es_cfg.get("min_delta", 0.0),
     )
 
-    # --------------------------------------------------------
-    # Tokenizer & Base Model
-    # --------------------------------------------------------
     tokenizer_name = config.get("tokenizer_name", config.get("local_path"))
     model_name = config.get("model_name", config.get("local_path"))
 
@@ -86,7 +74,6 @@ def main(config):
     base_model.gradient_checkpointing_enable()
     base_model.config.use_cache = False
 
-    # inject adapters and gate controller.
     adapter_cfg = AdapterConfig(
         rank=config["rank"],
         alpha=config["alpha"],
@@ -99,7 +86,6 @@ def main(config):
     model = injected.model
     gate_controller = injected.gate_controller
 
-    # configure params for gate toxicity training.
     prepare_model_for_gate_training(model, gate_controller)
 
     # Train the gate while adapters are modulated by learned logits.
@@ -109,7 +95,6 @@ def main(config):
 
     model.to(next(model.parameters()).device)
 
-    # Load pretrained adapters — REQUIRED for gate training
     load_dir = config.get("load_adapters_from", None)
 
     if load_dir:
@@ -118,9 +103,6 @@ def main(config):
     else:
         logger.warning("No adapter checkpoint specified; training from scratch.")
 
-    # --------------------------------------------------------
-    # Load datasets for gate_toxicity phase
-    # --------------------------------------------------------
     full_ds = build_gate_dataset(config, logger)
     gate_val_cfg = config.get("datasets", {}).get("gate_validation", [])
     if gate_val_cfg:
@@ -136,7 +118,9 @@ def main(config):
         train_raw = splits["train"]
         val_raw = splits["test"]
 
-    logger.info("Gate train rows: %d | validation rows: %d", len(train_raw), len(val_raw))
+    logger.info(
+        "Gate train rows: %d | validation rows: %d", len(train_raw), len(val_raw)
+    )
 
     train_ds = tokenize_text_dataset(train_raw, tokenizer, config)
     val_ds = tokenize_text_dataset(val_raw, tokenizer, config)
@@ -148,9 +132,6 @@ def main(config):
     train_loader = DataLoader(train_ds, shuffle=True, **loader_kwargs)
     val_loader = DataLoader(val_ds, shuffle=False, **loader_kwargs)
 
-    # --------------------------------------------------------
-    # Optimizer (gate params only)
-    # --------------------------------------------------------
     optimizer = get_gate_optimizer(
         gate_controller,
         lr=config["lr"],
@@ -166,12 +147,8 @@ def main(config):
     best_val = float("inf")
     save_adapter_only = bool(config.get("save_adapter_only", False))
 
-    # --------------------------------------------------------
-    # TRAINING LOOP
-    # --------------------------------------------------------
     global_step = 0
     use_amp = True
-
 
     torch.cuda.empty_cache()
     for epoch in range(config["epochs"]):
@@ -192,7 +169,7 @@ def main(config):
 
                 gate_logits = model.gate_cache.logits
 
-                loss = gate_loss(gate_logits, batch["label"]) / grad_accum
+                loss = binary_gate_loss(gate_logits, batch["label"]) / grad_accum
 
             loss.backward()
 
@@ -212,7 +189,6 @@ def main(config):
         )
         print_param_summary(model)
 
-        # Save best model
         if val_loss < best_val:
             best_val = val_loss
             save_training_checkpoint(
@@ -225,8 +201,6 @@ def main(config):
                 adapter_only=save_adapter_only,
             )
 
-
-        # Early stopping
         if early_stop.should_stop(val_loss, epoch + 1):
             logger.info("Early stopping triggered (%s).", early_stop.reason)
             save_training_checkpoint(
@@ -239,8 +213,6 @@ def main(config):
             )
             break
 
-        
-        # Periodic save
         if (epoch + 1) % config["save_every"] == 0:
             save_training_checkpoint(
                 model,
@@ -257,8 +229,6 @@ def main(config):
 if __name__ == "__main__":
     import argparse
     from ethical_adapter.config_io import load_yaml_config
-
-    print("Starting gate training...")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)

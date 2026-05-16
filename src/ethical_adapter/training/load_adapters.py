@@ -44,7 +44,6 @@ def load_adapters_from_checkpoint(
         logger.info(f"Loading adapter weights from {adapter_path}")
         state = load_file(adapter_path, device="cpu")
 
-
     # keep only adapter-related weights
     adapter_state = {k: v for k, v in state.items() if "adapter" in k}
 

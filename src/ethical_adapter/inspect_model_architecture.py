@@ -51,7 +51,9 @@ def _print_layer_summary(model) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, required=True, help="Local model path or HF model id.")
+    parser.add_argument(
+        "--model", type=str, required=True, help="Local model path or HF model id."
+    )
     parser.add_argument(
         "--pattern",
         type=str,

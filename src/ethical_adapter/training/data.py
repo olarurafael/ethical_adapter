@@ -1,47 +1,47 @@
+"""Dataset construction and tokenization for adapter/gate training.
+
+Public entry points:
+  - build_task_dataset: task data for adapter training
+  - build_alignment_dataset: plain-text alignment data for AlignGuard
+  - build_gate_dataset / load_gate_dataset: labeled gate training data
+  - prepare_task_dataset / prepare_alignment_dataset: tokenization helpers
+"""
+
 import hashlib
 import json
 import logging
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Any
 
 import torch
+from datasets import Dataset, concatenate_datasets, load_dataset
 from torch.nn.utils.rnn import pad_sequence
-from datasets import (
-    load_dataset,
-    concatenate_datasets,
-    Dataset,
-)
 
-from ethical_adapter.training.glue_format import FORMATTERS
+from ethical_adapter.task_formatting import FORMATTERS
 
 
-# -------------------------
-# Collators
-# -------------------------
+PROMPT_ANSWER_COLUMNS = {"prompt", "answer"}
+
 
 @dataclass
 class SupervisedCollator:
-    tokenizer: any
+    tokenizer: Any
 
     def __call__(self, features):
-        input_ids = [f["input_ids"] for f in features]
-        attention_mask = [f["attention_mask"] for f in features]
-        labels = [f["labels"] for f in features]
-
         input_ids = pad_sequence(
-            input_ids,
+            [feature["input_ids"] for feature in features],
             batch_first=True,
             padding_value=self.tokenizer.pad_token_id,
         )
         attention_mask = pad_sequence(
-            attention_mask,
+            [feature["attention_mask"] for feature in features],
             batch_first=True,
             padding_value=0,
         )
         labels = pad_sequence(
-            labels,
+            [feature["labels"] for feature in features],
             batch_first=True,
             padding_value=-100,
         )
@@ -53,361 +53,309 @@ class SupervisedCollator:
         }
 
 
-# -------------------------
-# Dataset loading helpers
-# -------------------------
-
-def smart_load_dataset(name, config_name=None, split=None, **kwargs):
-    """
-    Loads:
-      - a local JSON/JSONL file via datasets json loader
-      - otherwise a normal HF dataset
-    """
+def load_dataset_source(name, config_name=None, split=None, **kwargs):
+    """Load either a local JSON/JSONL file or a Hugging Face dataset."""
     if Path(name).exists():
-        return load_dataset(
-            "json",
-            data_files=name,
-            split=split,
-        )
+        return load_dataset("json", data_files=name, split=split)
 
     return load_dataset(name, config_name, split=split, **kwargs)
 
 
-def get_text_field(ex: Dict[str, Any], dcfg: Dict[str, Any]) -> str:
-    tf = dcfg.get("text_field")
-    if tf and tf in ex and isinstance(ex[tf], str):
-        return ex[tf]
+def extract_training_text(
+    example: dict[str, Any], dataset_config: dict[str, Any]
+) -> str:
+    configured_field = dataset_config.get("text_field")
+    if (
+        configured_field
+        and configured_field in example
+        and isinstance(example[configured_field], str)
+    ):
+        return example[configured_field]
 
-    if "prompt" in ex and "chosen" in ex:
-        p, c = ex["prompt"], ex["chosen"]
-        if isinstance(p, str) and isinstance(c, str):
-            return p + "\n" + c
+    if "prompt" in example and "chosen" in example:
+        prompt = example["prompt"]
+        chosen = example["chosen"]
+        if isinstance(prompt, str) and isinstance(chosen, str):
+            return prompt + "\n" + chosen
 
-    for key in ("text", "content", "comment_text", "prompt"):
-        if key in ex and isinstance(ex[key], str):
-            return ex[key]
+    for field in ("text", "content", "comment_text", "prompt"):
+        if field in example and isinstance(example[field], str):
+            return example[field]
 
-    pieces = [v for v in ex.values() if isinstance(v, str)]
-    return "\n".join(pieces)
-
-
-def _apply_max_samples(ds: Dataset, config: Dict[str, Any]) -> Dataset:
-    if config.get("max_train_samples"):
-        limit = min(config["max_train_samples"], len(ds))
-        logging.info("Using only %d samples out of %d.", limit, len(ds))
-        ds = ds.select(range(limit))
-    return ds
+    return "\n".join(value for value in example.values() if isinstance(value, str))
 
 
-def _get_dataset_seed(config: Dict[str, Any]) -> int:
+def _dataset_seed(config: dict[str, Any]) -> int:
     return int(config.get("dataset_seed", 42))
 
 
-def _write_dataset_jsonl(ds: Dataset, path: str) -> str:
-    out_path = Path(path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+def _limit_rows(dataset: Dataset, config: dict[str, Any]) -> Dataset:
+    max_samples = config.get("max_train_samples")
+    if not max_samples:
+        return dataset
 
-    with out_path.open("w", encoding="utf-8") as f:
-        for row in ds:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-    digest = hashlib.sha256(out_path.read_bytes()).hexdigest()
-    return digest
+    limit = min(max_samples, len(dataset))
+    logging.info("Using only %d samples out of %d.", limit, len(dataset))
+    return dataset.select(range(limit))
 
 
-def _maybe_load_frozen_task_dataset(config: Dict[str, Any], logger) -> Dataset | None:
-    frozen_path = config.get("frozen_task_dataset_path")
-    if not frozen_path:
+def _write_jsonl_dataset(dataset: Dataset, path: str) -> str:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with output_path.open("w", encoding="utf-8") as file:
+        for row in dataset:
+            file.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    return hashlib.sha256(output_path.read_bytes()).hexdigest()
+
+
+def _load_prebuilt_task_dataset(config: dict[str, Any], logger) -> Dataset | None:
+    dataset_path = config.get("frozen_task_dataset_path")
+    if not dataset_path:
         return None
 
-    frozen = Path(frozen_path)
-    if not frozen.exists():
+    dataset_path = Path(dataset_path)
+    if not dataset_path.exists():
         return None
 
-    logger.info("Loading frozen task dataset from %s", frozen)
-    ds = smart_load_dataset(str(frozen), split="train")
-
-    required = {"prompt", "answer"}
-    if not required.issubset(ds.column_names):
+    logger.info("Loading prebuilt task dataset from %s", dataset_path)
+    dataset = load_dataset_source(str(dataset_path), split="train")
+    if not PROMPT_ANSWER_COLUMNS.issubset(dataset.column_names):
         raise ValueError(
-            f"Frozen task dataset {frozen} must contain columns {sorted(required)}; "
-            f"got {ds.column_names}"
+            f"Prebuilt task dataset {dataset_path} must contain columns "
+            f"{sorted(PROMPT_ANSWER_COLUMNS)}; got {dataset.column_names}"
         )
 
-    logger.info("Loaded %d frozen task rows.", len(ds))
-    return ds
+    logger.info("Loaded %d prebuilt task rows.", len(dataset))
+    return dataset
 
 
-def _maybe_export_task_dataset(ds: Dataset, config: Dict[str, Any], logger) -> None:
-    export_path = config.get("frozen_task_dataset_path") or config.get("export_task_dataset_path")
+def _export_task_dataset_if_requested(
+    dataset: Dataset,
+    config: dict[str, Any],
+    logger,
+) -> None:
+    export_path = config.get("frozen_task_dataset_path") or config.get(
+        "export_task_dataset_path"
+    )
     if not export_path:
         return
 
-    digest = _write_dataset_jsonl(ds, export_path)
+    digest = _write_jsonl_dataset(dataset, export_path)
     logger.info(
         "Exported task dataset to %s (%d rows, sha256=%s)",
         export_path,
-        len(ds),
+        len(dataset),
         digest,
     )
 
 
-def _load_text_datasets(config: Dict[str, Any], subset_cfg: List[Dict[str, Any]]) -> Dataset:
-    merged = None
+def _build_plain_text_dataset(
+    config: dict[str, Any],
+    dataset_configs: list[dict[str, Any]],
+) -> Dataset:
+    datasets = []
 
-    for dcfg in subset_cfg:
-        ds = smart_load_dataset(
-            dcfg["name"],
-            dcfg.get("config"),
-            split=dcfg.get("split", "train"),
+    for dataset_config in dataset_configs:
+        dataset = load_dataset_source(
+            dataset_config["name"],
+            dataset_config.get("config"),
+            split=dataset_config.get("split", "train"),
             cache_dir=config["data_dir"],
         )
-
-        ds = ds.map(
-            lambda ex: {"text": get_text_field(ex, dcfg)},
+        dataset = dataset.map(
+            lambda example: {"text": extract_training_text(example, dataset_config)},
             num_proc=config.get("num_proc", 1),
         )
+        datasets.append(dataset)
 
-        merged = ds if merged is None else concatenate_datasets([merged, ds])
-
-    merged = merged.shuffle(seed=_get_dataset_seed(config))
-    merged = _apply_max_samples(merged, config)
-    return merged
+    merged = concatenate_datasets(datasets)
+    merged = merged.shuffle(seed=_dataset_seed(config))
+    return _limit_rows(merged, config)
 
 
-# -------------------------
-# Task dataset builders
-# -------------------------
-
-def load_supervised_task_dataset(config, datasets_cfg):
+def _build_prompt_answer_task_dataset(
+    config: dict[str, Any],
+    dataset_configs: list[dict[str, Any]],
+) -> Dataset:
     rows = []
 
-    for dcfg in datasets_cfg:
-        name = dcfg["name"]
-        task = dcfg.get("task_type")
-
+    for dataset_config in dataset_configs:
+        task = dataset_config.get("task_type")
         if task not in FORMATTERS:
             raise ValueError(f"Unknown task_type: {task}")
 
-        formatter = FORMATTERS[task]
-
-        ds = smart_load_dataset(
-            name,
-            dcfg.get("config"),
-            split=dcfg.get("split", "train"),
+        dataset = load_dataset_source(
+            dataset_config["name"],
+            dataset_config.get("config"),
+            split=dataset_config.get("split", "train"),
             cache_dir=config["data_dir"],
         )
+        formatter = FORMATTERS[task]
 
-        for ex in ds:
-            if "label" not in ex or ex["label"] == -1:
+        for example in dataset:
+            if "label" not in example or example["label"] == -1:
                 continue
 
-            prompt, answer = formatter(ex)
+            prompt, answer = formatter(example)
             rows.append({"prompt": prompt, "answer": answer})
 
-    rng = random.Random(_get_dataset_seed(config))
-    rng.shuffle(rows)
-
-    if config.get("max_train_samples"):
-        rows = rows[: config["max_train_samples"]]
+    random.Random(_dataset_seed(config)).shuffle(rows)
+    max_samples = config.get("max_train_samples")
+    if max_samples:
+        rows = rows[:max_samples]
 
     return Dataset.from_list(rows)
 
 
 def build_task_dataset(config, logger):
-    task_cfg = config.get("datasets", {}).get("task", [])
-    if not task_cfg:
+    task_configs = config.get("datasets", {}).get("task", [])
+    if not task_configs:
         raise ValueError("No task datasets configured under datasets.task")
 
-    frozen = _maybe_load_frozen_task_dataset(config, logger)
-    if frozen is not None:
-        return frozen
+    prebuilt_dataset = _load_prebuilt_task_dataset(config, logger)
+    if prebuilt_dataset is not None:
+        return prebuilt_dataset
 
     logger.info("Building task dataset")
+    if any("task_type" in dataset_config for dataset_config in task_configs):
+        dataset = _build_prompt_answer_task_dataset(config, task_configs)
+    else:
+        dataset = _build_plain_text_dataset(config, task_configs)
 
-    # supervised classification / reasoning tasks
-    if any("task_type" in d for d in task_cfg):
-        ds = load_supervised_task_dataset(config, task_cfg)
-        _maybe_export_task_dataset(ds, config, logger)
-        return ds
+    _export_task_dataset_if_requested(dataset, config, logger)
+    return dataset
 
-    # fallback: plain text LM-style task dataset
-    ds = _load_text_datasets(config, task_cfg)
-    _maybe_export_task_dataset(ds, config, logger)
-    return ds
-
-
-# -------------------------
-# Alignment dataset builders
-# -------------------------
 
 def build_alignment_dataset(config, logger):
-    align_cfg = config.get("datasets", {}).get("alignment", [])
-    if not align_cfg:
+    alignment_configs = config.get("datasets", {}).get("alignment", [])
+    if not alignment_configs:
         raise ValueError("No alignment datasets configured under datasets.alignment")
 
     logger.info("Building alignment dataset")
-    return _load_text_datasets(config, align_cfg)
+    return _build_plain_text_dataset(config, alignment_configs)
 
 
-# -------------------------
-# Gate dataset builders
-# -------------------------
-
-def load_gate_dataset(config, datasets_cfg) -> Dataset:
+def load_gate_dataset(config, dataset_configs) -> Dataset:
     datasets = []
 
-    for dcfg in datasets_cfg:
-        source = dcfg.get("data_files", dcfg.get("name"))
-        ds = smart_load_dataset(
+    for dataset_config in dataset_configs:
+        source = dataset_config.get("data_files", dataset_config.get("name"))
+        text_field = dataset_config.get("text_field", "text")
+        label_field = dataset_config.get("label_field", "label")
+
+        dataset = load_dataset_source(
             source,
-            dcfg.get("config"),
-            split=dcfg.get("split", "train"),
+            dataset_config.get("config"),
+            split=dataset_config.get("split", "train"),
             cache_dir=config["data_dir"],
         )
-
-        text_field = dcfg.get("text_field", "text")
-        label_field = dcfg.get("label_field", "label")
-
-        ds = ds.filter(
-            lambda x: isinstance(x.get(text_field), str)
-            and isinstance(x.get(label_field), (int, float))
+        dataset = dataset.filter(
+            lambda row: isinstance(row.get(text_field), str)
+            and isinstance(row.get(label_field), (int, float))
         )
-
-        ds = ds.map(
-            lambda x: {
-                "text": x[text_field],
-                "label": float(x[label_field]),
+        dataset = dataset.map(
+            lambda row: {
+                "text": row[text_field],
+                "label": float(row[label_field]),
             },
-            remove_columns=ds.column_names,
+            remove_columns=dataset.column_names,
         )
+        datasets.append(dataset)
 
-        datasets.append(ds)
-
-    merged = concatenate_datasets(datasets).shuffle(seed=42)
-    merged = _apply_max_samples(merged, config)
-    return merged
+    merged = concatenate_datasets(datasets).shuffle(seed=_dataset_seed(config))
+    return _limit_rows(merged, config)
 
 
 def build_gate_dataset(config, logger):
-    gate_cfg = config.get("datasets", {}).get("gate", [])
-    if not gate_cfg:
+    gate_configs = config.get("datasets", {}).get("gate", [])
+    if not gate_configs:
         raise ValueError("No gate datasets configured under datasets.gate")
 
     logger.info("Building gate dataset")
-    return load_gate_dataset(config, gate_cfg)
+    return load_gate_dataset(config, gate_configs)
 
 
-# -------------------------
-# Tokenization
-# -------------------------
-
-def tokenize_supervised_dataset(ds, tokenizer, config):
+def tokenize_supervised_dataset(dataset, tokenizer, config):
     max_length = config["max_length"]
 
-    def tok_fn(ex):
-        messages = [
-            {"role": "user", "content": ex["prompt"]},
-            {"role": "assistant", "content": ex["answer"]},
-        ]
-
+    def tokenize_example(example):
         full_text = tokenizer.apply_chat_template(
-            messages,
+            [
+                {"role": "user", "content": example["prompt"]},
+                {"role": "assistant", "content": example["answer"]},
+            ],
             tokenize=False,
             add_generation_prompt=False,
         )
-
         prompt_text = tokenizer.apply_chat_template(
-            [{"role": "user", "content": ex["prompt"]}],
+            [{"role": "user", "content": example["prompt"]}],
             tokenize=False,
             add_generation_prompt=True,
         )
 
-        full_enc = tokenizer(
+        full_tokens = tokenizer(
             full_text,
             truncation=True,
             max_length=max_length,
             padding=False,
         )
-        prompt_enc = tokenizer(
+        prompt_tokens = tokenizer(
             prompt_text,
             truncation=True,
             max_length=max_length,
             padding=False,
         )
 
-        input_ids = full_enc["input_ids"]
+        input_ids = full_tokens["input_ids"]
         labels = input_ids.copy()
-
-        cut = min(len(prompt_enc["input_ids"]), len(labels))
-        for i in range(cut):
-            labels[i] = -100
-
-        attention_mask = [1] * len(input_ids)
+        prompt_length = min(len(prompt_tokens["input_ids"]), len(labels))
+        labels[:prompt_length] = [-100] * prompt_length
 
         return {
             "input_ids": torch.tensor(input_ids, dtype=torch.long),
-            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+            "attention_mask": torch.ones(len(input_ids), dtype=torch.long),
             "labels": torch.tensor(labels, dtype=torch.long),
         }
 
-    new_ds = ds.map(tok_fn, remove_columns=ds.column_names)
-    new_ds.set_format(type="torch")
-    return new_ds
+    tokenized = dataset.map(tokenize_example, remove_columns=dataset.column_names)
+    tokenized.set_format(type="torch")
+    return tokenized
 
 
-def tokenize_text_dataset(ds, tokenizer, config):
-    """
-    For plain text datasets:
-      - returns input_ids + attention_mask
-      - preserves label field if it exists (for gate training)
-      - training code can use labels = input_ids when needed
-    """
-    def tok_fn(batch):
-        enc = tokenizer(
+def tokenize_text_dataset(dataset, tokenizer, config):
+    def tokenize_batch(batch):
+        tokens = tokenizer(
             batch["text"],
             return_tensors="pt",
             truncation=True,
             padding="max_length",
             max_length=config["max_length"],
         )
-        output = {k: v for k, v in enc.items()}
-        
-        # Preserve label field if it exists (for gate training)
+        output = dict(tokens)
         if "label" in batch:
             output["label"] = torch.tensor(batch["label"], dtype=torch.float32)
-        
         return output
 
-    # Keep label column if it exists
-    cols_to_remove = [c for c in ds.column_names if c != "label"]
-    
-    new_ds = ds.map(
-        tok_fn,
+    columns_to_remove = [name for name in dataset.column_names if name != "label"]
+    tokenized = dataset.map(
+        tokenize_batch,
         batched=True,
-        remove_columns=cols_to_remove,
+        remove_columns=columns_to_remove,
         num_proc=config.get("num_proc", 1),
     )
-    new_ds.set_format(type="torch")
-    return new_ds
+    tokenized.set_format(type="torch")
+    return tokenized
 
 
-def prepare_task_dataset(ds, tokenizer, config):
-    """
-    Returns tokenized task dataset + collator.
-    """
-    if "prompt" in ds.column_names and "answer" in ds.column_names:
-        collator = SupervisedCollator(tokenizer)
-        tok_ds = tokenize_supervised_dataset(ds, tokenizer, config)
-    else:
-        collator = None
-        tok_ds = tokenize_text_dataset(ds, tokenizer, config)
+def prepare_task_dataset(dataset, tokenizer, config):
+    if PROMPT_ANSWER_COLUMNS.issubset(dataset.column_names):
+        tokenized = tokenize_supervised_dataset(dataset, tokenizer, config)
+        return tokenized, SupervisedCollator(tokenizer)
 
-    return tok_ds, collator
+    return tokenize_text_dataset(dataset, tokenizer, config), None
 
 
-def prepare_alignment_dataset(ds, tokenizer, config):
-    """
-    Alignment datasets are plain text.
-    """
-    return tokenize_text_dataset(ds, tokenizer, config)
+def prepare_alignment_dataset(dataset, tokenizer, config):
+    return tokenize_text_dataset(dataset, tokenizer, config)
