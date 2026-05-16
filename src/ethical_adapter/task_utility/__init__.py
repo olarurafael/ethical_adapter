@@ -17,10 +17,9 @@ Typical usage:
 
 Or run all three modes sequentially:
 
-    PYTHONPATH=src python -m ethical_adapter.task_utility.script_to_run_all_3 \
+    PYTHONPATH=src python scripts/task_utility_script_to_run_all_3.py \
         --task boolq \
         --adapter_checkpoint runs/adapters/qwen25_3b_alignguard/boolq/.../best \
         --gate_checkpoint runs/gates/qwen25_3b_alignguard/2026-03-11_16-33-23/best \
         --output_root results/task_utility_boolq_all3
 """
-

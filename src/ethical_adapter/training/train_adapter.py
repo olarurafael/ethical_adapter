@@ -109,11 +109,8 @@ def main(config):
     # load datasets for this phase
     full_ds = build_task_dataset(config, logger)
 
-    print("DATASET COLUMNS:", full_ds.column_names)
     splits = full_ds.train_test_split(test_size=0.1, seed=42)
 
-    
-    
     if "prompt" in full_ds.column_names:
         collator = SupervisedCollator(tokenizer)
         train_ds = tokenize_supervised_dataset(splits["train"], tokenizer, config)
@@ -122,17 +119,6 @@ def main(config):
         collator = None
         train_ds = tokenize_text_dataset(splits["train"], tokenizer, config)
         val_ds = tokenize_text_dataset(splits["test"], tokenizer, config)
-
-    sample = train_ds[0]
-
-    print(tokenizer.decode(sample["input_ids"]))
-
-    if "labels" in sample:
-        print("LABEL TOKENS:")
-        mask = sample["labels"] != -100
-        print(tokenizer.decode(sample["input_ids"][mask]))
-
-
 
     loader_kwargs = dict(
         batch_size=config["batch_size"],
@@ -261,9 +247,8 @@ def main(config):
 
 if __name__ == "__main__":
     import argparse
-    from ethical_adapter.config_io import load_yaml_config
 
-    print("Starting training...")
+    from ethical_adapter.config_io import load_yaml_config
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)

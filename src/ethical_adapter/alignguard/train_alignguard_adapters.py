@@ -36,26 +36,6 @@ from ethical_adapter.alignguard.alignguard_utils import (
 from ethical_adapter.alignguard.blockwise_subspace import BlockwiseOjaEstimator
 
 
-# eval step for adapter training
-# @torch.no_grad()
-# def eval_step(model, loader):
-#     model.eval()
-#     total_loss = 0.0
-#     count = 0
-
-#     for batch in loader:
-#         batch = {k: v.to(model.device) for k, v in batch.items()}
-#         outputs = model(
-#             input_ids=batch["input_ids"],
-#             attention_mask=batch["attention_mask"],
-#             labels=batch["labels"],
-#         )
-#         total_loss += outputs.loss.item()
-#         count += 1
-
-#     return total_loss / max(count, 1)
-
-
 @torch.no_grad()
 def eval_step(model, loader):
     model.eval()

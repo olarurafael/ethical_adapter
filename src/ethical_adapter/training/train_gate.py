@@ -102,7 +102,7 @@ def main(config):
     # configure params for gate toxicity training.
     prepare_model_for_gate_training(model, gate_controller)
 
-    # make sure adapters are not forced to be open or closed.
+    # Train the gate while adapters are modulated by learned logits.
     for m in model.modules():
         if isinstance(m, GatedAdapter):
             m.set_adapter_mode("gate")
